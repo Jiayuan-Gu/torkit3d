@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def unproject_depth(depth_image: np.ndarray, intrinsic: np.ndarray, offset=0.5):
+def unproject_depth(depth_image: np.ndarray, intrinsic: np.ndarray, offset):
     """Unproject a depth image to a 3D poin cloud.
 
     Args:
