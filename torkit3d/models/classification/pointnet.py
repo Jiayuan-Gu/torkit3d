@@ -7,10 +7,17 @@ __all__ = ['PointNet']
 
 
 class PointNet(nn.Module):
+    """PointNet for classification.
+
+    Notes:
+        1. The original implementation includes dropout for global MLPs.
+        2. The original implementation decays the BN momentum.
+    """
+
     def __init__(self,
                  in_channels=3,
                  local_channels=(64, 64, 64, 128, 1024),
-                 global_channels=()):
+                 global_channels=(512, 256)):
         super().__init__()
 
         self.in_channels = in_channels
@@ -43,6 +50,8 @@ class PointNet(nn.Module):
             if isinstance(module, (nn.Linear, nn.Conv1d, nn.Conv2d)):
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+            if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d)):
+                module.momentum = 0.01
 
 
 def main():
