@@ -63,7 +63,7 @@ setup(
     ],
     python_requires='>=3.6',
     url="",
-    packages=find_packages(exclude=("tests",)),
+    packages=find_packages(include=['torkit3d'], exclude=["tests"]),
     long_description="",
     classifiers=[
         "Programming Language :: Python :: 3",
