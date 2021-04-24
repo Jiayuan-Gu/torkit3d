@@ -1,21 +1,39 @@
 import torch
 from torkit.nn import mlp2d_bn_relu
 from torkit3d.ops.group_points import group_points
+import torch.utils.checkpoint
 
 
 class EdgeConvBlock(torch.nn.Module):
-    def __init__(self, in_channels, conv_channels):
+    """EdgeConv block.
+
+    Args:
+        in_channels: input channels
+        conv_channels (sequence): a list of intermediate channels
+        checkpoint: whether to checkpoint models for less memory
+    """
+
+    def __init__(self, in_channels, conv_channels, checkpoint=False):
         super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = conv_channels[-1]
+        self.checkpoint = checkpoint
 
         self.convs = mlp2d_bn_relu(in_channels * 2, conv_channels)
 
     def forward(self, query_feature, key_feature, key_ind):
         # query_feature: [B, C, N1], key_feature: [B, C, N2], key_ind: [B, N1, K]
         edge_feature = get_edge_feature(query_feature, key_feature, key_ind)  # [B, 2C, N1, K]
-        edge_feature = self.convs(edge_feature)
+
+        if self.checkpoint:
+            if edge_feature.requires_grad:
+                edge_feature = torch.utils.checkpoint.checkpoint(self.convs, edge_feature)
+            else:
+                edge_feature = self.convs(edge_feature)
+        else:
+            edge_feature = self.convs(edge_feature)
+
         output, _ = edge_feature.max(dim=3)
         return output
 

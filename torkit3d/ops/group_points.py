@@ -20,12 +20,12 @@ class GroupPointsFunction(torch.autograd.Function):
         return grad_input, None
 
 
-def group_points(points, index):
+def group_points(points: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
     """Gather points by index.
 
     Args:
-        points (torch.Tensor): [B, C, N1]
-        index (torch.Tensor): [B, N2, K], indices of neighbors.
+        points: [B, C, N1]
+        index: [B, N2, K], indices of neighbors.
 
     Returns:
         torch.Tensor: [B, C, N2, K], grouped points.
