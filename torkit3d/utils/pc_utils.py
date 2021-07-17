@@ -1,6 +1,9 @@
 import numpy as np
 
 
+# ---------------------------------------------------------------------------- #
+# Depth
+# ---------------------------------------------------------------------------- #
 def unproject_depth(depth_image: np.ndarray, intrinsic: np.ndarray, offset):
     """Unproject a depth image to a 3D poin cloud.
 
@@ -19,6 +22,20 @@ def unproject_depth(depth_image: np.ndarray, intrinsic: np.ndarray, offset):
     return points
 
 
+def get_intrinsic_matrix(width, height, fov, degree=False):
+    """Get the camera intrinsic matrix according to image size and fov."""
+    if degree:
+        fov = np.deg2rad(fov)
+    f = (width / 2.0) / np.tan(fov / 2.0)
+    xc = (width - 1.0) / 2.0
+    yc = (height - 1.0) / 2.0
+    K = np.array([[f, 0, xc], [0, f, yc], [0, 0, 1.0]])
+    return K
+
+
+# ---------------------------------------------------------------------------- #
+# Point cloud
+# ---------------------------------------------------------------------------- #
 def pad_with_first_or_clip(array: np.array, n: int):
     """Pad or clip an array with the first item.
     It is usually used for sampling a fixed number of points (PointNet and variants).
