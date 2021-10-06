@@ -3,3 +3,4 @@
 #include <farthest_point_sample.h>
 #include <interpolate.h>
 #include <knn_distance.h>
+#include <chamfer_distance.h>

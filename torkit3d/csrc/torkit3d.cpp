@@ -11,5 +11,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
   m.def("interpolate_forward_cuda", &interpolate_forward_cuda);
   m.def("interpolate_backward_cuda", &interpolate_backward_cuda);
   m.def("knn_distance_cuda", &knn_distance_cuda);
+  m.def("chamfer_distance_forward_cuda", &chamfer_distance_forward_cuda);
+  m.def("chamfer_distance_backward_cuda", &chamfer_distance_backward_cuda);
 #endif
 }
