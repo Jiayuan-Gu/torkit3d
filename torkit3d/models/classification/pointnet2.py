@@ -53,7 +53,7 @@ class PN2SSG(nn.Module):
                     in_channels=c_in,
                     mlp_channels=c_out_list,
                     query_neighbor=BallQuery(
-                        radius=radius_list[0], max_neighbors=num_neighbors[idx]
+                        radius=radius_list[idx], max_neighbors=num_neighbors[idx]
                     ),
                     use_xyz=use_xyz,
                 )

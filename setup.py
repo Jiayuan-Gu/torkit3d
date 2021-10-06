@@ -56,7 +56,7 @@ setup(
     description="Pytorch Toolkit3D",
     install_requires=[
         'torkit',
-        'torch==1.5.1',
+        'torch>=1.5.1',
         'numpy',
         'scipy',
         'open3d==0.11.2',
