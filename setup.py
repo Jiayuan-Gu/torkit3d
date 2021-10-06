@@ -59,11 +59,11 @@ setup(
         'torch>=1.5.1',
         'numpy',
         'scipy',
-        'open3d==0.11.2',
+        # 'open3d==0.11.2',
     ],
     python_requires='>=3.6',
     url="",
-    packages=find_packages(include=['torkit3d'], exclude=["tests"]),
+    packages=find_packages(include=['torkit3d*'], exclude=["tests"]),
     long_description="",
     classifiers=[
         "Programming Language :: Python :: 3",
