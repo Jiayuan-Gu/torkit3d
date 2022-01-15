@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
 
-from torkit.nn import mlp_bn_relu, mlp1d_bn_relu
+from torkit3d.nn import mlp1d_bn_relu, mlp_bn_relu
 from torkit3d.ops.edge_conv import EdgeConvBlock
 from torkit3d.ops.knn import compute_knn_builtin
 
-__all__ = ['DGCNN']
+__all__ = ["DGCNN"]
 
 
 class DGCNN(nn.Module):
@@ -15,13 +15,15 @@ class DGCNN(nn.Module):
         1. The original implementation includes dropout for global MLPs.
     """
 
-    def __init__(self,
-                 in_channels=3,
-                 edge_conv_channels=(64, 64, 64, 128),
-                 local_channels=(1024,),
-                 global_channels=(512, 256),
-                 k=20,
-                 feature_knn=False):
+    def __init__(
+        self,
+        in_channels=3,
+        edge_conv_channels=(64, 64, 64, 128),
+        local_channels=(1024,),
+        global_channels=(512, 256),
+        k=20,
+        feature_knn=False,
+    ):
         super().__init__()
 
         self.in_channels = in_channels
@@ -65,7 +67,7 @@ class DGCNN(nn.Module):
         global_feature, max_indices = torch.max(local_feature, 2)
         output_feature = self.mlp_global(global_feature)
 
-        return {'feature': output_feature, 'max_indices': max_indices}
+        return {"feature": output_feature, "max_indices": max_indices}
 
     def reset_parameters(self):
         for name, module in self.named_modules():
@@ -93,5 +95,5 @@ def main():
         print(k, v.shape)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

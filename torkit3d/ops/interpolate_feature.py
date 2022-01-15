@@ -1,4 +1,5 @@
 import torch
+
 from torkit3d import _C
 
 
@@ -9,9 +10,8 @@ class InterpolateFeature(torch.autograd.Function):
         ctx.save_for_backward(index, weight)
         ctx.n1 = n1
         interpolated_feature = _C.interpolate_forward_cuda(
-            feature.contiguous(),
-            index.contiguous(),
-            weight.contiguous())
+            feature.contiguous(), index.contiguous(), weight.contiguous()
+        )
         return interpolated_feature
 
     @staticmethod
@@ -19,14 +19,14 @@ class InterpolateFeature(torch.autograd.Function):
         index, weight = ctx.saved_tensors
         n1 = ctx.n1
         grad_input = _C.interpolate_backward_cuda(
-            grad_out[0].contiguous(),
-            index.contiguous(),
-            weight.contiguous(),
-            n1)
+            grad_out[0].contiguous(), index.contiguous(), weight.contiguous(), n1
+        )
         return grad_input, None, None
 
 
-def interpolate_feature(feature: torch.Tensor, index: torch.Tensor, weight: torch.Tensor):
+def interpolate_feature(
+    feature: torch.Tensor, index: torch.Tensor, weight: torch.Tensor
+):
     """Interpolate features given indices and weights.
 
     Args:

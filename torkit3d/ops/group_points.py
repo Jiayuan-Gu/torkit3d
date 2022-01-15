@@ -1,4 +1,5 @@
 import torch
+
 from torkit3d import _C
 
 
@@ -7,16 +8,14 @@ class GroupPointsFunction(torch.autograd.Function):
     def forward(ctx, points, index):
         ctx.save_for_backward(index)
         ctx.num_points = points.size(2)
-        return _C.group_points_forward_cuda(
-            points.contiguous(), index.contiguous())
+        return _C.group_points_forward_cuda(points.contiguous(), index.contiguous())
 
     @staticmethod
     def backward(ctx, *grad_output):
         index = ctx.saved_tensors[0]
         grad_input = _C.group_points_backward_cuda(
-            grad_output[0].contiguous(),
-            index.contiguous(),
-            ctx.num_points)
+            grad_output[0].contiguous(), index.contiguous(), ctx.num_points
+        )
         return grad_input, None
 
 

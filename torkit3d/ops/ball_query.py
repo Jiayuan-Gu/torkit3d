@@ -1,4 +1,5 @@
 import torch
+
 from torkit3d import _C
 
 
@@ -13,11 +14,9 @@ class BallQueryFunction(torch.autograd.Function):
         return (None,) * len(grad_outputs)
 
 
-def ball_query(query: torch.Tensor,
-               key: torch.Tensor,
-               radius,
-               max_neighbors,
-               transpose=True):
+def ball_query(
+    query: torch.Tensor, key: torch.Tensor, radius, max_neighbors, transpose=True
+):
     """Query neighbors within a radius.
 
     Args:

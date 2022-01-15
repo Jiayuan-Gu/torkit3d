@@ -25,13 +25,21 @@ def np2pcd(points, colors=None, normals=None):
     return pc
 
 
-def visualize_point_cloud(points, colors=None, normals=None,
-                          show_frame=False, frame_size=1.0, frame_origin=(0, 0, 0)):
+def visualize_point_cloud(
+    points,
+    colors=None,
+    normals=None,
+    show_frame=False,
+    frame_size=1.0,
+    frame_origin=(0, 0, 0),
+):
     """Visualize a point cloud."""
     pc = np2pcd(points, colors, normals)
     geometries = [pc]
     if show_frame:
-        coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=frame_size, origin=frame_origin)
+        coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+            size=frame_size, origin=frame_origin
+        )
         geometries.append(coord_frame)
     o3d.visualization.draw_geometries(geometries)
 
@@ -67,12 +75,15 @@ def compute_normals(points, search_param=None, camera_location=(0.0, 0.0, 0.0)):
     return normals
 
 
-def voxel_down_sample(points, voxel_size, min_bound=(-5.0, -5.0, -5.0), max_bound=(5.0, 5.0, 5.0)):
+def voxel_down_sample(
+    points, voxel_size, min_bound=(-5.0, -5.0, -5.0), max_bound=(5.0, 5.0, 5.0)
+):
     """Downsample the point cloud and return sample indices."""
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     downsample_pcd, mapping, index_buckets = pcd.voxel_down_sample_and_trace(
-        voxel_size, np.array(min_bound)[:, None], np.array(max_bound)[:, None])
+        voxel_size, np.array(min_bound)[:, None], np.array(max_bound)[:, None]
+    )
     sample_indices = [int(x[0]) for x in index_buckets]
     return sample_indices
 

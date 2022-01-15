@@ -1,6 +1,7 @@
-import numpy as np
-import cv2
 import warnings
+
+import cv2
+import numpy as np
 
 VERTEX_COLORS = [
     (0, 0, 0),
@@ -17,26 +18,28 @@ VERTEX_COLORS = [
 def get_corners():
     """Get 8 corners of a cuboid. (The order follows OrientedBoundingBox in open3d)
 
-        (y)
-        2 -------- 7
-       /|         /|
-      5 -------- 4 .
-      | |        | |
-      . 0 -------- 1 (x)
-      |/         |/
-      3 -------- 6
-      (z)
+      (y)
+      2 -------- 7
+     /|         /|
+    5 -------- 4 .
+    | |        | |
+    . 0 -------- 1 (x)
+    |/         |/
+    3 -------- 6
+    (z)
     """
-    corners = np.array([
-        [0.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-        [1.0, 1.0, 1.0],
-        [0.0, 1.0, 1.0],
-        [1.0, 0.0, 1.0],
-        [1.0, 1.0, 0.0],
-    ])
+    corners = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+        ]
+    )
     return corners - [0.5, 0.5, 0.5]
 
 
@@ -51,10 +54,16 @@ def get_edges(corners):
     return edges
 
 
-def draw_projected_box3d(image: np.ndarray,
-                         center, size, rotation,
-                         extrinsic, intrinsic,
-                         color=(0, 255, 0), thickness=1):
+def draw_projected_box3d(
+    image: np.ndarray,
+    center,
+    size,
+    rotation,
+    extrinsic,
+    intrinsic,
+    color=(0, 255, 0),
+    thickness=1,
+):
     """Draw a projected 3D bounding box on the image.
 
     Args:
@@ -82,7 +91,7 @@ def draw_projected_box3d(image: np.ndarray,
 
     for (i, j) in edges:
         if z[i] <= 0.0 or z[j] <= 0.0:
-            warnings.warn('Some corners are behind the camera.')
+            warnings.warn("Some corners are behind the camera.")
             continue
         cv2.line(
             image,
@@ -105,17 +114,25 @@ def test_draw_projected_box3d():
     image[:128, :128] = 1.0
     # world: -x forward, y right, z up
     # cam: z forward, x right, y down
-    extrinsic = np.array([[0., 1., 0., 0.],
-                          [0., 0., -1., 0.],
-                          [-1., 0., 0., 2.],
-                          [0., 0., 0., 1.]])
+    extrinsic = np.array(
+        [
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0],
+            [-1.0, 0.0, 0.0, 2.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
     intrinsic = np.array([[128, 0, 128], [0, 128, 128], [0, 0, 1]])
     angle = 0
     # angle = 10
-    rotation = Rotation.from_euler('x', angle, degrees=True).as_matrix()
-    draw_projected_box3d(image,
-                         center=[0., 0., 0.], size=[1., 1., 1.], rotation=rotation,
-                         extrinsic=extrinsic, intrinsic=intrinsic,
-                         )
-    cv2.imshow('debug', image)
+    rotation = Rotation.from_euler("x", angle, degrees=True).as_matrix()
+    draw_projected_box3d(
+        image,
+        center=[0.0, 0.0, 0.0],
+        size=[1.0, 1.0, 1.0],
+        rotation=rotation,
+        extrinsic=extrinsic,
+        intrinsic=intrinsic,
+    )
+    cv2.imshow("debug", image)
     cv2.waitKey(0)

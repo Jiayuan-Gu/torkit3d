@@ -1,8 +1,9 @@
 """PointNet++"""
 
 import torch.nn as nn
-from torkit.nn.functional import batch_index_select
-from torkit3d.layers.pointnet2 import SetAbstraction, BallQuery, FeaturePropagation
+
+from torkit3d.layers.pointnet2 import BallQuery, FeaturePropagation, SetAbstraction
+from torkit3d.nn.functional import batch_index_select
 from torkit3d.ops.farthest_point_sample import farthest_point_sample
 
 __all__ = ["PN2SSG"]

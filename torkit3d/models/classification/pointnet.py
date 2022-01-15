@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
 
-from torkit.nn import mlp_bn_relu, mlp1d_bn_relu
+from torkit3d.nn import mlp1d_bn_relu, mlp_bn_relu
 
-__all__ = ['PointNet']
+__all__ = ["PointNet"]
 
 
 class PointNet(nn.Module):
@@ -14,10 +14,12 @@ class PointNet(nn.Module):
         2. The original implementation decays the BN momentum.
     """
 
-    def __init__(self,
-                 in_channels=3,
-                 local_channels=(64, 64, 64, 128, 1024),
-                 global_channels=(512, 256)):
+    def __init__(
+        self,
+        in_channels=3,
+        local_channels=(64, 64, 64, 128, 1024),
+        global_channels=(512, 256),
+    ):
         super().__init__()
 
         self.in_channels = in_channels
@@ -43,7 +45,7 @@ class PointNet(nn.Module):
         global_feature, max_indices = torch.max(local_feature, 2)
         output_feature = self.mlp_global(global_feature)
 
-        return {'feature': output_feature, 'max_indices': max_indices}
+        return {"feature": output_feature, "max_indices": max_indices}
 
     def reset_parameters(self):
         for name, module in self.named_modules():
@@ -75,5 +77,5 @@ def main():
         print(k, v.shape)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

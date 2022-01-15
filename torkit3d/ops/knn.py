@@ -1,7 +1,9 @@
 import torch
 
 
-def compute_knn_builtin(query: torch.Tensor, key: torch.Tensor, k: int, exclude_first=False):
+def compute_knn_builtin(
+    query: torch.Tensor, key: torch.Tensor, k: int, exclude_first=False
+):
     """Compute k nearest neighbors with builtin operators.
 
     Args:
@@ -17,4 +19,4 @@ def compute_knn_builtin(query: torch.Tensor, key: torch.Tensor, k: int, exclude_
     distance = torch.cdist(query.transpose(1, 2), key.transpose(1, 2))  # [B, N1, N2]
     k_actual = k + (1 if exclude_first else 0)
     _, knn_ind = torch.topk(distance, k_actual)
-    return knn_ind[..., (1 if exclude_first else 0):]
+    return knn_ind[..., (1 if exclude_first else 0) :]

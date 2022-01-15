@@ -3,21 +3,17 @@
 import torch
 import torch.nn as nn
 
-from torkit.nn import mlp1d_bn_relu, mlp2d_bn_relu
-from torkit3d.ops.group_points import group_points
+from torkit3d.nn import mlp1d_bn_relu, mlp2d_bn_relu
 from torkit3d.ops.ball_query import ball_query
-from torkit3d.ops.knn_distance import knn_distance
+from torkit3d.ops.group_points import group_points
 from torkit3d.ops.interpolate_feature import interpolate_feature
+from torkit3d.ops.knn_distance import knn_distance
 
 
 class SetAbstraction(nn.Module):
     """PointNet++ set abstraction module."""
 
-    def __init__(self,
-                 in_channels,
-                 mlp_channels,
-                 query_neighbor,
-                 use_xyz):
+    def __init__(self, in_channels, mlp_channels, query_neighbor, use_xyz):
         super().__init__()
 
         self.in_channels = in_channels
@@ -27,7 +23,9 @@ class SetAbstraction(nn.Module):
 
         self.mlp = mlp2d_bn_relu(in_channels + (3 if use_xyz else 0), mlp_channels)
 
-    def forward(self, in_xyz: torch.Tensor, out_xyz: torch.Tensor, in_feature: torch.Tensor):
+    def forward(
+        self, in_xyz: torch.Tensor, out_xyz: torch.Tensor, in_feature: torch.Tensor
+    ):
         """
 
         Args:
@@ -49,7 +47,9 @@ class SetAbstraction(nn.Module):
         if in_feature is not None:
             nbr_feature = group_points(in_feature, nbr_index)
         else:
-            nbr_feature = in_xyz.new_empty([in_xyz.size(0), 0, nbr_index.size(1), nbr_index.size(2)])
+            nbr_feature = in_xyz.new_empty(
+                [in_xyz.size(0), 0, nbr_index.size(1), nbr_index.size(2)]
+            )
 
         if self.use_xyz:
             # centralize
@@ -62,8 +62,10 @@ class SetAbstraction(nn.Module):
         return out_feature
 
     def extra_repr(self):
-        attributes = ['use_xyz']
-        return ', '.join(['{:s}={}'.format(name, getattr(self, name)) for name in attributes])
+        attributes = ["use_xyz"]
+        return ", ".join(
+            ["{:s}={}".format(name, getattr(self, name)) for name in attributes]
+        )
 
 
 class BallQuery(torch.nn.Module):
@@ -77,8 +79,10 @@ class BallQuery(torch.nn.Module):
         return nbr_index
 
     def extra_repr(self):
-        attributes = ['radius', 'max_neighbors']
-        return ', '.join(['{:s}={}'.format(name, getattr(self, name)) for name in attributes])
+        attributes = ["radius", "max_neighbors"]
+        return ", ".join(
+            ["{:s}={}".format(name, getattr(self, name)) for name in attributes]
+        )
 
 
 class FeaturePropagation(nn.Module):
@@ -129,5 +133,7 @@ class FeatureInterpolator(nn.Module):
         return interp_feature
 
     def extra_repr(self):
-        attributes = ['num_neighbors']
-        return ', '.join(['{:s}={}'.format(name, getattr(self, name)) for name in attributes])
+        attributes = ["num_neighbors"]
+        return ", ".join(
+            ["{:s}={}".format(name, getattr(self, name)) for name in attributes]
+        )
