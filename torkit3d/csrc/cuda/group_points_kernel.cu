@@ -1,28 +1,15 @@
 // Memory efficient gather points
 
 #include <ATen/ATen.h>
-#include <ATen/cuda/CUDAApplyUtils.cuh> // at::cuda::getApplyGrid
+#include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/ApplyGridUtils.cuh> // at::cuda::getApplyGrid
+#include "torkit3d_utils.h"
 
-// NOTE: AT_ASSERT has become TORCH_CHECK on master after 0.4.
-#define CHECK_CUDA(x) TORCH_CHECK(x.is_cuda(), #x " must be a CUDA tensor")
-#define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
-#define CHECK_INPUT(x) \
-  CHECK_CUDA(x);       \
-  CHECK_CONTIGUOUS(x)
-
-/**
-  * Forward
-  * Input:
-  *   input: [B, C, N1]
-  *   index: [B, N2, K]
-  * Output:
-  *   output: [B, C, N2, K]
-  **/
 at::Tensor group_points_forward_cuda(
-    const at::Tensor input,
-    const at::Tensor index)
+    const at::Tensor input, // [B, C, N1]
+    const at::Tensor index  // [B, N2, K]
+)
 {
-
   // Sanity check
   CHECK_CUDA(input);
   CHECK_CUDA(index);
@@ -36,11 +23,10 @@ at::Tensor group_points_forward_cuda(
   const auto n2 = index.size(1);
   const auto k = index.size(2);
 
-  auto input_expand = input.unsqueeze(2).expand({b, c, n2, n1}); // (B, C, N2, N1)
-  auto index_expand = index.unsqueeze(1).expand({b, c, n2, k});  // (B, C, N2, K)
+  auto input_expand = input.unsqueeze(2).expand({b, c, n2, n1}); // [B, C, N2, N1]
+  auto index_expand = index.unsqueeze(1).expand({b, c, n2, k});  // [B, C, N2, K]
 
-  auto output = input_expand.gather(3, index_expand); // (B, C, N2, K)
-
+  auto output = input_expand.gather(3, index_expand); // [B, C, N2, K]
   return output;
 }
 
@@ -78,23 +64,14 @@ __global__ void group_points_backward_kernel(
   }
 }
 
-/**
-  * Backward
-  * Input:
-  *   grad_output: [B, C, N2, K]
-  *   index: [B, N2, K]
-  * Output:
-  *   grad_input: [B, C, N1]
-  **/
 at::Tensor group_points_backward_cuda(
-    const at::Tensor grad_output,
-    const at::Tensor index,
-    const int64_t num_points)
+    const at::Tensor grad_output, // [B, C, N2, K]
+    const at::Tensor index,       // [B, N2, K]
+    const int64_t n1)
 {
-
   // Sanity check
-  CHECK_INPUT(grad_output);
-  CHECK_INPUT(index);
+  CHECK_CONTIGUOUS_CUDA(grad_output);
+  CHECK_CONTIGUOUS_CUDA(index);
   CHECK_EQ(grad_output.dim(), 4);
   CHECK_EQ(index.dim(), 3);
   CHECK_EQ(index.size(0), grad_output.size(0));
@@ -106,34 +83,32 @@ at::Tensor group_points_backward_cuda(
   const auto n2 = grad_output.size(2);
   const auto k = grad_output.size(3);
 
-  // Allocate new space for output
-  auto grad_input = at::zeros({b, c, num_points}, grad_output.options());
-  CHECK_CUDA(grad_input);
-  CHECK_CONTIGUOUS(grad_input);
+  // Allocate output memory
+  auto grad_input = at::zeros({b, c, n1}, grad_output.options()); // [B, C, N1]
+  CHECK_CONTIGUOUS_CUDA(grad_input);
 
   // Calculate grids and blocks for kernels
   const auto totalElements = grad_output.numel();
-  const dim3 block = at::cuda::getApplyBlock();
+  const int BLOCK_SIZE = at::cuda::getApplyBlockSize();
   dim3 grid;
-  const int curDevice = at::cuda::current_device();
-  // getApplyGrid: aten/src/ATen/cuda/CUDAApplyUtils.cuh
-  THArgCheck(at::cuda::getApplyGrid(totalElements, grid, curDevice), 1, "Too many elements to calculate");
+  TORCH_CHECK(at::cuda::getApplyGrid(totalElements, grid, grad_output.get_device(), BLOCK_SIZE), "unable to get grid");
 
-  AT_DISPATCH_FLOATING_TYPES(grad_output.scalar_type(), "group_points_backward_cuda", ([&] {
-                               group_points_backward_kernel<scalar_t, int64_t>
-                                   <<<grid, block>>>(
-                                       grad_input.data_ptr<scalar_t>(),
-                                       grad_output.data_ptr<scalar_t>(),
-                                       index.data_ptr<int64_t>(),
-                                       b,
-                                       c,
-                                       num_points,
-                                       n2,
-                                       k,
-                                       totalElements);
-                             }));
+  AT_DISPATCH_FLOATING_TYPES(
+      grad_output.scalar_type(),
+      "group_points_backward_cuda",
+      ([&]
+       { group_points_backward_kernel<scalar_t, int64_t>
+             <<<grid, BLOCK_SIZE>>>(
+                 grad_input.data_ptr<scalar_t>(),
+                 grad_output.data_ptr<scalar_t>(),
+                 index.data_ptr<int64_t>(),
+                 b,
+                 c,
+                 n1,
+                 n2,
+                 k,
+                 totalElements); }));
 
-  THCudaCheck(cudaGetLastError());
-
+  AT_CUDA_CHECK(cudaGetLastError());
   return grad_input;
 }

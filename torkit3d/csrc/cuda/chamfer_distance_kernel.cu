@@ -4,82 +4,81 @@
 #include <vector>
 
 #include <ATen/ATen.h>
-#include <ATen/cuda/CUDAApplyUtils.cuh> // at::cuda::getApplyGrid
-#include <THC/THC.h>
+#include <ATen/cuda/ApplyGridUtils.cuh> // at::cuda::getApplyGrid
+#include "torkit3d_utils.h"
 
-#define CHECK_CUDA(x) TORCH_CHECK(x.type().is_cuda(), #x " must be a CUDA tensor")
-#define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
-#define CHECK_INPUT(x) \
-    CHECK_CUDA(x);     \
-    CHECK_CONTIGUOUS(x)
-
-template <typename scalar_t, typename index_t, uint64_t BLOCK_SIZE>
+template <unsigned int BLOCK_SIZE, unsigned int DIM, typename scalar_t, typename index_t>
 __global__ void chamfer_distance_forward_kernel(
-    scalar_t *__restrict__ dist,
-    index_t *__restrict__ idx,
-    const scalar_t *__restrict__ xyz1,
-    const scalar_t *__restrict__ xyz2,
-    const int64_t batch_size,
-    const int64_t n1,
-    const int64_t n2)
+    scalar_t *__restrict__ dist,       // [B, N1]
+    index_t *__restrict__ idx,         // [B, N1]
+    const scalar_t *__restrict__ xyz1, // [B, N1, D]
+    const scalar_t *__restrict__ xyz2, // [B, N2, D]
+    const int bs,
+    const int n1,
+    const int n2)
 {
-    // calculate the number of blocks
-    const int64_t num_block1 = (n1 + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    const int64_t num_block2 = (n2 + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    const int64_t total_blocks = batch_size * num_block1;
+    const int n_chunks1 = (n1 + BLOCK_SIZE - 1) / BLOCK_SIZE; // number of chunks in xyz1
+    const int n_chunks2 = (n2 + BLOCK_SIZE - 1) / BLOCK_SIZE; // number of chunks in xyz2
+    const int total_blocks = bs * n_chunks1;
+    const int tid = threadIdx.x;
 
     for (int block_idx = blockIdx.x; block_idx < total_blocks; block_idx += gridDim.x)
     {
-        __shared__ scalar_t xyz2_buffer[BLOCK_SIZE * 3];
-        const int batch_idx = block_idx / num_block1;
-        const int block_idx1 = block_idx % num_block1;
-        const int xyz1_idx = (block_idx1 * BLOCK_SIZE) + threadIdx.x;
-        const int xyz1_offset = (batch_idx * n1 + xyz1_idx) * 3;
-        scalar_t x1, y1, z1;
+        const int batch_idx = block_idx / n_chunks1;
+        const int chunk_idx1 = block_idx % n_chunks1;
+        const int xyz1_idx = (chunk_idx1 * BLOCK_SIZE) + tid;
+        const int xyz1_offset = (batch_idx * n1 + xyz1_idx) * DIM;
+
+        // Load current xyz1 point
+        scalar_t cur_xyz1[DIM] = {0.0};
         if (xyz1_idx < n1)
         {
-            x1 = xyz1[xyz1_offset + 0];
-            y1 = xyz1[xyz1_offset + 1];
-            z1 = xyz1[xyz1_offset + 2];
+#pragma unroll
+            for (int d = 0; d < DIM; ++d)
+                cur_xyz1[d] = xyz1[xyz1_offset + d];
         }
-        else
-        {
-            x1 = y1 = z1 = 0.0;
-        }
-        scalar_t min_dist = 1e32;
+
+        __shared__ scalar_t xyz2_buffer[BLOCK_SIZE * DIM];
+        scalar_t min_dist = 1e40;
         index_t min_idx = -1;
-        // load a block of xyz2 data to reduce the times to read data
-        for (int block_idx2 = 0; block_idx2 < num_block2; ++block_idx2)
+
+        // Sweep over chunks of xyz2 data to find closest point
+        for (int chunk_idx2 = 0; chunk_idx2 < n_chunks2; ++chunk_idx2)
         {
-            // load xyz2 data
-            int xyz2_idx = (block_idx2 * BLOCK_SIZE) + threadIdx.x;
-            int xyz2_offset = (batch_idx * n2 + xyz2_idx) * 3;
+            // Load a chunk of xyz2 data into shared memory
+            int xyz2_idx = (chunk_idx2 * BLOCK_SIZE) + tid;
+            int xyz2_offset = (batch_idx * n2 + xyz2_idx) * DIM;
             if (xyz2_idx < n2)
             {
 #pragma unroll
-                for (int i = 0; i < 3; ++i)
-                {
-                    xyz2_buffer[threadIdx.x * 3 + i] = xyz2[xyz2_offset + i];
-                }
+                for (int d = 0; d < DIM; ++d)
+                    xyz2_buffer[tid * DIM + d] = xyz2[xyz2_offset + d];
             }
             __syncthreads();
-            // calculate the distance between xyz1 and xyz2, with the shared memory.
-            for (int j = 0; j < BLOCK_SIZE; ++j)
+
+            // Compare current xyz1 point with all points in shared memory
+            for (int i = 0; i < BLOCK_SIZE; ++i)
             {
-                xyz2_idx = (block_idx2 * BLOCK_SIZE) + j;
-                const int buffer_offset = j * 3;
-                scalar_t x2 = xyz2_buffer[buffer_offset + 0];
-                scalar_t y2 = xyz2_buffer[buffer_offset + 1];
-                scalar_t z2 = xyz2_buffer[buffer_offset + 2];
-                scalar_t d = (x1 - x2) * (x1 - x2) + (y1 - y2) * (y1 - y2) + (z1 - z2) * (z1 - z2);
-                if (xyz2_idx < n2 && d < min_dist)
+                xyz2_idx = (chunk_idx2 * BLOCK_SIZE) + i;
+
+                // Compute the distance
+                scalar_t dist = 0.0;
+#pragma unroll
+                for (int d = 0; d < DIM; ++d)
                 {
-                    min_dist = d;
+                    scalar_t diff = xyz2_buffer[i * DIM + d] - cur_xyz1[d];
+                    dist += diff * diff;
+                }
+
+                if (xyz2_idx < n2 && dist < min_dist)
+                {
+                    min_dist = dist;
                     min_idx = xyz2_idx;
                 }
             }
             __syncthreads();
         }
+
         if (xyz1_idx < n1)
         {
             const int output_offset = batch_idx * n1 + xyz1_idx;
@@ -89,187 +88,187 @@ __global__ void chamfer_distance_forward_kernel(
     }
 }
 
-inline bool getGrid(uint64_t numBlocks, dim3 &grid, int64_t curDevice)
-{
-    if (curDevice == -1)
-        return false;
-    uint64_t maxGridX = at::cuda::getDeviceProperties(curDevice)->maxGridSize[0];
-    if (numBlocks > maxGridX)
-        numBlocks = maxGridX;
-    grid = dim3(numBlocks);
-    return true;
-}
-
 std::vector<at::Tensor> chamfer_distance_forward_cuda(
-    const at::Tensor xyz1,
-    const at::Tensor xyz2)
+    const at::Tensor xyz1, // [B, N1, 3]
+    const at::Tensor xyz2  // [B, N2, 3]
+)
 {
-    const auto batch_size = xyz1.size(0);
+    // Sanity check
+    CHECK_CONTIGUOUS_CUDA(xyz1);
+    CHECK_CONTIGUOUS_CUDA(xyz2);
+    CHECK_EQ(xyz1.size(0), xyz2.size(0));
+    CHECK_EQ(xyz1.size(2), 3);
+    CHECK_EQ(xyz2.size(2), 3);
+
+    const auto bs = xyz1.size(0);
     const auto n1 = xyz1.size(1);
     const auto n2 = xyz2.size(1);
 
-    CHECK_EQ(xyz2.size(0), batch_size);
-    CHECK_EQ(xyz1.size(2), 3);
-    CHECK_EQ(xyz2.size(2), 3);
-    CHECK_INPUT(xyz1);
-    CHECK_INPUT(xyz2);
-
-    auto dist1 = at::zeros({batch_size, n1}, xyz1.type());
-    auto idx1 = at::zeros({batch_size, n1}, xyz1.type().toScalarType(at::kLong));
-    auto dist2 = at::zeros({batch_size, n2}, xyz2.type());
-    auto idx2 = at::zeros({batch_size, n2}, xyz2.type().toScalarType(at::kLong));
+    // Outputs
+    auto dist1 = at::zeros({bs, n1}, xyz1.options());
+    auto idx1 = at::zeros({bs, n1}, xyz1.options().dtype(at::kLong));
+    auto dist2 = at::zeros({bs, n2}, xyz2.options());
+    auto idx2 = at::zeros({bs, n2}, xyz2.options().dtype(at::kLong));
 
     // Calculate grids and blocks for kernels
-    const uint64_t BLOCK_SIZE = 512;
-    const auto num_block1 = (n1 + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    const auto num_block2 = (n2 + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    // From getApplyGrid: aten/src/ATen/cuda/CUDAApplyUtils.cuh
+    // TODO(jigu): dynamic block size
+    const int BLOCK_SIZE = 256;
+    const auto n_chunks1 = (n1 + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    const auto n_chunks2 = (n2 + BLOCK_SIZE - 1) / BLOCK_SIZE;
     dim3 grid1, grid2;
-    const auto curDevice = at::cuda::current_device();
-    getGrid(batch_size * num_block1, grid1, curDevice);
-    getGrid(batch_size * num_block2, grid2, curDevice);
+    // const auto curDevice = at::cuda::current_device();
+    const auto curDevice = xyz1.get_device();
+    getGrid(bs * n_chunks1, grid1, curDevice);
+    getGrid(bs * n_chunks2, grid2, curDevice);
+    // printf("(%ld, %ld, %ld, %ld, %ld)\n", bs, n1, n2, n_chunks1, n_chunks2);
 
-    // printf("(b, nb, n1, n2): (%ld, %ld, %ld, %ld)\n", batch_size, num_block1, n1, n2);
-    AT_DISPATCH_FLOATING_TYPES(xyz1.scalar_type(), "chamfer_distance_forward_cuda", ([&]
-                                                                                     { chamfer_distance_forward_kernel<scalar_t, int64_t, BLOCK_SIZE>
-                                                                                           <<<grid1, BLOCK_SIZE>>>(
-                                                                                               dist1.data<scalar_t>(),
-                                                                                               idx1.data<int64_t>(),
-                                                                                               xyz1.data<scalar_t>(),
-                                                                                               xyz2.data<scalar_t>(),
-                                                                                               batch_size, n1, n2); }));
-    THCudaCheck(cudaGetLastError());
+    AT_DISPATCH_FLOATING_TYPES(
+        xyz1.scalar_type(),
+        "chamfer_distance_forward_cuda",
+        ([&]
+         { chamfer_distance_forward_kernel<BLOCK_SIZE, 3, scalar_t, int64_t>
+               <<<grid1, BLOCK_SIZE>>>(
+                   dist1.data_ptr<scalar_t>(),
+                   idx1.data_ptr<int64_t>(),
+                   xyz1.data_ptr<scalar_t>(),
+                   xyz2.data_ptr<scalar_t>(),
+                   bs, n1, n2); }));
 
-    AT_DISPATCH_FLOATING_TYPES(xyz2.scalar_type(), "chamfer_distance_forward_cuda", ([&]
-                                                                                     { chamfer_distance_forward_kernel<scalar_t, int64_t, BLOCK_SIZE>
-                                                                                           <<<grid2, BLOCK_SIZE>>>(
-                                                                                               dist2.data<scalar_t>(),
-                                                                                               idx2.data<int64_t>(),
-                                                                                               xyz2.data<scalar_t>(),
-                                                                                               xyz1.data<scalar_t>(),
-                                                                                               batch_size, n2, n1); }));
-    THCudaCheck(cudaGetLastError());
+    AT_DISPATCH_FLOATING_TYPES(
+        xyz2.scalar_type(),
+        "chamfer_distance_forward_cuda",
+        ([&]
+         { chamfer_distance_forward_kernel<BLOCK_SIZE, 3, scalar_t, int64_t>
+               <<<grid2, BLOCK_SIZE>>>(
+                   dist2.data_ptr<scalar_t>(),
+                   idx2.data_ptr<int64_t>(),
+                   xyz2.data_ptr<scalar_t>(),
+                   xyz1.data_ptr<scalar_t>(),
+                   bs, n2, n1); }));
 
+    AT_CUDA_CHECK(cudaGetLastError());
     return std::vector<at::Tensor>({dist1, idx1, dist2, idx2});
 }
 
-/**********************************
-* Backward kernel for chamfer
-***********************************/
-/* Backward Kernel */
 template <typename scalar_t, typename index_t>
 __global__ void chamfer_distance_backward_kernel(
-    scalar_t *__restrict__ grad_xyz1,
-    scalar_t *__restrict__ grad_xyz2,
-    const scalar_t *__restrict__ grad_dist,
-    const index_t *__restrict__ index,
-    const scalar_t *__restrict__ xyz1,
-    const scalar_t *__restrict__ xyz2,
-    const int64_t batch_size,
-    const int64_t n1,
-    const int64_t n2)
+    scalar_t *__restrict__ grad_xyz1,       // [B, N1]
+    scalar_t *__restrict__ grad_xyz2,       // [B, N2]
+    const scalar_t *__restrict__ grad_dist, // [B, N1]
+    const index_t *__restrict__ index,      // [B, N1]
+    const scalar_t *__restrict__ xyz1,      // [B, N1, 3]
+    const scalar_t *__restrict__ xyz2,      // [B, N2, 3]
+    const int bs,
+    const int n1,
+    const int n2)
 {
-    const uint64_t totalElements = batch_size * n1;
+    const int totalElements = bs * n1;
     for (int linearId = blockIdx.x * blockDim.x + threadIdx.x;
          linearId < totalElements;
          linearId += gridDim.x * blockDim.x)
     {
-        int batch_idx = linearId / n1;
-        int xyz1_offset = linearId * 3;
-        scalar_t x1 = xyz1[xyz1_offset + 0];
-        scalar_t y1 = xyz1[xyz1_offset + 1];
-        scalar_t z1 = xyz1[xyz1_offset + 2];
-        int xyz2_offset = (batch_idx * n2 + index[linearId]) * 3;
-        scalar_t x2 = xyz2[xyz2_offset + 0];
-        scalar_t y2 = xyz2[xyz2_offset + 1];
-        scalar_t z2 = xyz2[xyz2_offset + 2];
+        const int batch_idx = linearId / n1;
+
+        const int xyz1_offset = linearId * 3;
+        const scalar_t *xyz1_i = xyz1 + xyz1_offset;
+        scalar_t x1 = xyz1_i[0];
+        scalar_t y1 = xyz1_i[1];
+        scalar_t z1 = xyz1_i[2];
+
+        const int xyz2_offset = (batch_idx * n2 + index[linearId]) * 3;
+        const scalar_t *xyz2_i = xyz2 + xyz2_offset;
+        scalar_t x2 = xyz2_i[0];
+        scalar_t y2 = xyz2_i[1];
+        scalar_t z2 = xyz2_i[2];
+
         scalar_t g = grad_dist[linearId] * 2;
         scalar_t gx = g * (x1 - x2);
         scalar_t gy = g * (y1 - y2);
         scalar_t gz = g * (z1 - z2);
-        atomicAdd(grad_xyz1 + xyz1_offset + 0, gx);
-        atomicAdd(grad_xyz1 + xyz1_offset + 1, gy);
-        atomicAdd(grad_xyz1 + xyz1_offset + 2, gz);
-        atomicAdd(grad_xyz2 + xyz2_offset + 0, -gx);
-        atomicAdd(grad_xyz2 + xyz2_offset + 1, -gy);
-        atomicAdd(grad_xyz2 + xyz2_offset + 2, -gz);
+
+        scalar_t *grad_xyz1_i = grad_xyz1 + xyz1_offset;
+        atomicAdd(grad_xyz1_i + 0, gx);
+        atomicAdd(grad_xyz1_i + 1, gy);
+        atomicAdd(grad_xyz1_i + 2, gz);
+        scalar_t *grad_xyz2_i = grad_xyz2 + xyz2_offset;
+        atomicAdd(grad_xyz2_i + 0, -gx);
+        atomicAdd(grad_xyz2_i + 1, -gy);
+        atomicAdd(grad_xyz2_i + 2, -gz);
     }
 }
 
-/* Chamfer backward interface
-Input:
-  grad_dist1: (B, N1)
-  grad_dist2: (B, N2)
-  xyz1: (B, N1, 3)
-  xyz2: (B, N2, 3)
-  idx1: (B, N1)
-  idx2: (B, N2)
-Output:
-  grad_xyz1: (B, 3, N1)
-  grad_xyz2: (B, 3, N2)
-*/
 std::vector<at::Tensor> chamfer_distance_backward_cuda(
-    const at::Tensor grad_dist1,
-    const at::Tensor grad_dist2,
-    const at::Tensor xyz1,
-    const at::Tensor xyz2,
-    const at::Tensor idx1,
-    const at::Tensor idx2)
+    const at::Tensor grad_dist1, // [B, N1]
+    const at::Tensor grad_dist2, // [B, N2]
+    const at::Tensor xyz1,       // [B, N, 3]
+    const at::Tensor xyz2,       // [B, N2, 3]
+    const at::Tensor idx1,       // [B, N1]
+    const at::Tensor idx2        // [B, N2]
+)
 {
-    const auto batch_size = grad_dist1.size(0);
+    CHECK_CONTIGUOUS_CUDA(grad_dist1);
+    CHECK_CONTIGUOUS_CUDA(grad_dist2);
+    CHECK_CONTIGUOUS_CUDA(xyz1);
+    CHECK_CONTIGUOUS_CUDA(xyz2);
+    CHECK_CONTIGUOUS_CUDA(idx1);
+    CHECK_CONTIGUOUS_CUDA(idx2);
+
+    const auto bs = grad_dist1.size(0);
     const auto n1 = grad_dist1.size(1);
     const auto n2 = grad_dist2.size(1);
-    CHECK_EQ(grad_dist2.size(0), batch_size);
-    CHECK_EQ(xyz1.size(0), batch_size);
-    CHECK_EQ(xyz2.size(0), batch_size);
+
+    // Sanity check
+    CHECK_EQ(grad_dist2.size(0), bs);
+    CHECK_EQ(xyz1.size(0), bs);
+    CHECK_EQ(xyz2.size(0), bs);
     CHECK_EQ(xyz1.size(1), n1);
     CHECK_EQ(xyz2.size(1), n2);
     CHECK_EQ(xyz1.size(2), 3);
     CHECK_EQ(xyz2.size(2), 3);
-    CHECK_EQ(idx1.size(0), batch_size);
-    CHECK_EQ(idx2.size(0), batch_size);
+    CHECK_EQ(idx1.size(0), bs);
+    CHECK_EQ(idx2.size(0), bs);
     CHECK_EQ(idx1.size(1), n1);
     CHECK_EQ(idx2.size(1), n2);
-    CHECK_INPUT(grad_dist1);
-    CHECK_INPUT(grad_dist2);
-    CHECK_INPUT(xyz1);
-    CHECK_INPUT(xyz2);
-    CHECK_INPUT(idx1);
-    CHECK_INPUT(idx2);
 
-    auto grad_xyz1 = at::zeros({batch_size, n1, 3}, grad_dist1.type());
-    auto grad_xyz2 = at::zeros({batch_size, n2, 3}, grad_dist2.type());
+    auto grad_xyz1 = at::zeros({bs, n1, 3}, grad_dist1.options());
+    auto grad_xyz2 = at::zeros({bs, n2, 3}, grad_dist2.options());
+
     // Calculate grids and blocks for kernels
-    const dim3 block = at::cuda::getApplyBlock();
+    const int BLOCK_SIZE = at::cuda::getApplyBlockSize();
     dim3 grid1, grid2;
-    const auto curDevice = at::cuda::current_device();
-    // getApplyGrid: aten/src/ATen/cuda/CUDAApplyUtils.cuh
-    THArgCheck(at::cuda::getApplyGrid(batch_size * n1, grid1, curDevice), 1, "Too many elements to calculate");
-    THArgCheck(at::cuda::getApplyGrid(batch_size * n2, grid2, curDevice), 1, "Too many elements to calculate");
+    // const auto curDevice = at::cuda::current_device();
+    const auto curDevice = grad_dist1.get_device();
+    TORCH_CHECK(at::cuda::getApplyGrid(bs * n1, grid1, curDevice, BLOCK_SIZE), "unable to get grid");
+    TORCH_CHECK(at::cuda::getApplyGrid(bs * n2, grid2, curDevice, BLOCK_SIZE), "unable to get grid");
 
-    AT_DISPATCH_FLOATING_TYPES(grad_dist1.scalar_type(), "chamfer_distance_backward_cuda", ([&]
-                                                                                            { chamfer_distance_backward_kernel<scalar_t, int64_t>
-                                                                                                  <<<grid1, block>>>(
-                                                                                                      grad_xyz1.data<scalar_t>(),
-                                                                                                      grad_xyz2.data<scalar_t>(),
-                                                                                                      grad_dist1.data<scalar_t>(),
-                                                                                                      idx1.data<int64_t>(),
-                                                                                                      xyz1.data<scalar_t>(),
-                                                                                                      xyz2.data<scalar_t>(),
-                                                                                                      batch_size, n1, n2); }));
-    THCudaCheck(cudaGetLastError());
+    AT_DISPATCH_FLOATING_TYPES(
+        grad_dist1.scalar_type(),
+        "chamfer_distance_backward_cuda",
+        ([&]
+         { chamfer_distance_backward_kernel<scalar_t, int64_t>
+               <<<grid1, BLOCK_SIZE>>>(
+                   grad_xyz1.data_ptr<scalar_t>(),
+                   grad_xyz2.data_ptr<scalar_t>(),
+                   grad_dist1.data_ptr<scalar_t>(),
+                   idx1.data_ptr<int64_t>(),
+                   xyz1.data_ptr<scalar_t>(),
+                   xyz2.data_ptr<scalar_t>(),
+                   bs, n1, n2); }));
 
-    AT_DISPATCH_FLOATING_TYPES(grad_dist2.scalar_type(), "chamfer_distance_backward_cuda", ([&]
-                                                                                            { chamfer_distance_backward_kernel<scalar_t, int64_t>
-                                                                                                  <<<grid2, block>>>(
-                                                                                                      grad_xyz2.data<scalar_t>(),
-                                                                                                      grad_xyz1.data<scalar_t>(),
-                                                                                                      grad_dist2.data<scalar_t>(),
-                                                                                                      idx2.data<int64_t>(),
-                                                                                                      xyz2.data<scalar_t>(),
-                                                                                                      xyz1.data<scalar_t>(),
-                                                                                                      batch_size, n2, n1); }));
-    THCudaCheck(cudaGetLastError());
+    AT_DISPATCH_FLOATING_TYPES(
+        grad_dist2.scalar_type(),
+        "chamfer_distance_backward_cuda",
+        ([&]
+         { chamfer_distance_backward_kernel<scalar_t, int64_t>
+               <<<grid2, BLOCK_SIZE>>>(
+                   grad_xyz2.data_ptr<scalar_t>(),
+                   grad_xyz1.data_ptr<scalar_t>(),
+                   grad_dist2.data_ptr<scalar_t>(),
+                   idx2.data_ptr<int64_t>(),
+                   xyz2.data_ptr<scalar_t>(),
+                   xyz1.data_ptr<scalar_t>(),
+                   bs, n2, n1); }));
 
+    AT_CUDA_CHECK(cudaGetLastError());
     return std::vector<at::Tensor>({grad_xyz1, grad_xyz2});
 }

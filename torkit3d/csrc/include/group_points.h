@@ -10,5 +10,5 @@ at::Tensor group_points_forward_cuda(
 at::Tensor group_points_backward_cuda(
     const at::Tensor grad_output,
     const at::Tensor index,
-    const int64_t num_points);
+    const int64_t n1);
 #endif

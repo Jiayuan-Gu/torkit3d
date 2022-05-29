@@ -1,124 +1,91 @@
 // CUDA Implementation for KNN with distance.
 
-#include <algorithm>
 #include <vector>
-
 #include <ATen/ATen.h>
-#include <ATen/cuda/CUDAApplyUtils.cuh>
+#include <ATen/cuda/ApplyGridUtils.cuh>
+#include "torkit3d_utils.h"
 
-#define CHECK_CUDA(x) TORCH_CHECK(x.is_cuda(), #x " must be a CUDA tensor")
-#define CHECK_CONTIGUOUS(x) TORCH_CHECK(x.is_contiguous(), #x " must be contiguous")
-#define CHECK_INPUT(x) \
-  CHECK_CUDA(x);       \
-  CHECK_CONTIGUOUS(x)
-
-#define MAX_THREADS 512
-
-inline int opt_n_threads(int work_size)
-{
-  const int pow_2 = std::log(static_cast<double>(work_size)) / std::log(2.0);
-  return std::max(std::min(1 << pow_2, MAX_THREADS), 1);
-}
-
-// From getApplyGrid: aten/src/ATen/cuda/CUDAApplyUtils.cuh
-inline bool getGrid(uint64_t numBlocks, dim3 &grid, int64_t curDevice)
-{
-  if (curDevice == -1)
-    return false;
-  uint64_t maxGridX = at::cuda::getDeviceProperties(curDevice)->maxGridSize[0];
-  if (numBlocks > maxGridX)
-    numBlocks = maxGridX;
-  grid = dim3(numBlocks);
-  return true;
-}
-
-/****************************
-* Kernel for searching point
-*****************************/
 template <unsigned int BLOCK_SIZE, unsigned int K, unsigned int DIM, typename scalar_t, typename index_t>
 __global__ void knn_distance_kernel(
-    index_t *__restrict__ index,
-    scalar_t *__restrict__ distance,
-    const scalar_t *__restrict__ query,
-    const scalar_t *__restrict__ key,
-    const int64_t batch_size,
-    const int64_t num_query,
-    const int64_t num_key)
+    index_t *__restrict__ index,        // [B, N1, K]
+    scalar_t *__restrict__ distance,    // [B, N1, K]
+    const scalar_t *__restrict__ query, // [B, N1, D]
+    const scalar_t *__restrict__ key,   // [B, N2, D]
+    const int bs,
+    const int n1,
+    const int n2)
 {
-
-  // calculate the number of blocks
-  const int n_blocks1 = (num_query + BLOCK_SIZE - 1) / BLOCK_SIZE;
-  const int n_blocks2 = (num_key + BLOCK_SIZE - 1) / BLOCK_SIZE;
-  const int total_blocks = batch_size * n_blocks1;
+  const int n_blocks = (n1 + BLOCK_SIZE - 1) / BLOCK_SIZE; // number of thread blocks for query and outputs
+  const int n_chunks = (n2 + BLOCK_SIZE - 1) / BLOCK_SIZE; // number of data chunks for key
+  const int total_blocks = bs * n_blocks;
+  const int tid = threadIdx.x;
 
   for (int block_idx = blockIdx.x; block_idx < total_blocks; block_idx += gridDim.x)
   {
-    __shared__ scalar_t key_buffer[BLOCK_SIZE * DIM];
-    const int batch_idx = block_idx / n_blocks1;
-    const int block_idx1 = block_idx % n_blocks1;
-    const int query_idx = (block_idx1 * BLOCK_SIZE) + threadIdx.x;
-    const int query_offset = (batch_idx * num_query + query_idx) * DIM;
+    const int batch_idx = block_idx / n_blocks;
+    const int chunk_idx1 = block_idx % n_blocks;
+    const int query_idx = (chunk_idx1 * BLOCK_SIZE) + tid;
+    const int query_offset = (batch_idx * n1 + query_idx) * DIM;
 
-    // load current query point
+    // Load current query data
     scalar_t cur_query[DIM] = {0.0};
-    if (query_idx < num_query)
+    if (query_idx < n1)
     {
 #pragma unroll
-      for (int i = 0; i < DIM; ++i)
-      {
-        cur_query[i] = query[query_offset + i];
-      }
+      for (int d = 0; d < DIM; ++d)
+        cur_query[d] = query[query_offset + d];
     }
 
-    // record topk
-    scalar_t min_dist[K] = {1e40};
-    int min_idx[K] = {-1};
+    __shared__ scalar_t key_buffer[BLOCK_SIZE * DIM];
+    scalar_t mink_dist[K] = {1e40}; // top K nearest distance
+    int mink_idx[K] = {-1};         // top K nearest indices
 
-    // load a block of key data to reduce the time to read data
-    for (int block_idx2 = 0; block_idx2 < n_blocks2; ++block_idx2)
+    // Sweep over chunks of key data to find k nearest neighbors
+    for (int chunk_idx2 = 0; chunk_idx2 < n_chunks; ++chunk_idx2)
     {
-      // load key data
-      int key_idx = (block_idx2 * BLOCK_SIZE) + threadIdx.x;
-      int key_offset = (batch_idx * num_key + key_idx) * DIM;
-      if (key_idx < num_key)
+      // Load a chunk of key data into shared memory within the block
+      const int key_idx_t = (chunk_idx2 * BLOCK_SIZE) + tid;
+      const int key_offset = (batch_idx * n2 + key_idx_t) * DIM;
+      if (key_idx_t < n2)
       {
 #pragma unroll
-        for (int i = 0; i < DIM; ++i)
-        {
-          key_buffer[threadIdx.x * DIM + i] = key[key_offset + i];
-        }
+        for (int d = 0; d < DIM; ++d)
+          key_buffer[tid * DIM + d] = key[key_offset + d];
       }
       __syncthreads();
 
-      // calculate the distance between current query and key, with the shared memory.
-      if (query_idx < num_query)
+      if (query_idx < n1)
       {
-        for (int j = 0; j < BLOCK_SIZE; ++j)
+        // Compare the current query point and all key points in the shared memory
+        for (int i = 0; i < BLOCK_SIZE; ++i)
         {
-          int key_idx2 = (block_idx2 * BLOCK_SIZE) + j;
-          const int buffer_offset = j * DIM;
+          const int key_idx_i = (chunk_idx2 * BLOCK_SIZE) + i;
+
+          // Compute the distance
           scalar_t dist = 0.0;
 #pragma unroll
-          for (int i = 0; i < DIM; ++i)
+          for (int d = 0; d < DIM; ++d)
           {
-            scalar_t diff = key_buffer[buffer_offset + i] - cur_query[i];
+            scalar_t diff = key_buffer[i * DIM + d] - cur_query[d];
             dist += diff * diff;
           }
-          if (key_idx2 < num_key)
+
+          if (key_idx_i < n2)
           {
-// update min distance
+            // Update k-nn
 #pragma unroll
             for (int k = 0; k < K; ++k)
             {
-              if (dist < min_dist[k])
+              if (dist < mink_dist[k])
               {
-                for (int l = K - 1; l > k; --l)
+                // bubble sort
+                for (int j = K - 1; j > k; --j)
                 {
-                  min_dist[l] = min_dist[l - 1];
-                  min_idx[l] = min_idx[l - 1];
+                  mink_dist[j] = mink_dist[j - 1];
+                  mink_idx[j] = mink_idx[j - 1];
                 }
-                min_dist[k] = dist;
-                min_idx[k] = key_idx2;
+                mink_dist[k] = dist;
+                mink_idx[k] = key_idx_i;
                 break;
               }
             }
@@ -128,78 +95,68 @@ __global__ void knn_distance_kernel(
       __syncthreads();
     }
 
-    // output
-    const int out_offset = (batch_idx * num_query + query_idx) * K;
-    if (query_idx < num_query)
+    // Output
+    const int out_offset = (batch_idx * n1 + query_idx) * K;
+    if (query_idx < n1)
     {
 #pragma unroll
       for (int k = 0; k < K; ++k)
       {
-        index[out_offset + k] = min_idx[k];
-        distance[out_offset + k] = min_dist[k];
+        index[out_offset + k] = mink_idx[k];
+        distance[out_offset + k] = mink_dist[k];
       }
     }
   }
 }
 
-/**
- * Forward
- * Input:
- *  query: [B, N1, 3]
- *  key: [B, N2, 3]
- *  k: int
- * Output:
- *  index: [B, N1, K]
- *  distance: [B, N1, K]
- **/
 std::vector<at::Tensor> knn_distance_cuda(
-    const at::Tensor query,
-    const at::Tensor key,
+    const at::Tensor query, // [B, N1, 3]
+    const at::Tensor key,   // [B, N2, 3]
     const int64_t k)
 {
-
   // sanity check
-  CHECK_INPUT(query);
-  CHECK_INPUT(key);
+  CHECK_CONTIGUOUS_CUDA(query);
+  CHECK_CONTIGUOUS_CUDA(key);
   CHECK_EQ(query.dim(), 3);
   CHECK_EQ(key.dim(), 3);
   CHECK_EQ(query.size(0), key.size(0));
   CHECK_EQ(query.size(2), 3);
   CHECK_GE(key.size(1), k);
   CHECK_EQ(key.size(2), 3);
-  TORCH_CHECK(k == 3, "Only support 3-NN.");
+  TORCH_CHECK(k == 3, "only support 3-NN");
 
-  const auto batch_size = query.size(0);
-  const auto num_query = query.size(1);
-  const auto dim = query.size(2);
-  const auto num_key = key.size(1);
+  const auto bs = query.size(0);
+  const auto n1 = query.size(1);
+  const auto n2 = key.size(1);
 
-  auto index = at::zeros({batch_size, num_query, k}, query.options().dtype(at::kLong));
-  auto distance = at::zeros({batch_size, num_query, k}, query.options());
+  auto index = at::zeros({bs, n1, k}, query.options().dtype(at::kLong));
+  auto distance = at::zeros({bs, n1, k}, query.options());
 
   // Calculate grids and blocks for kernels
-  const auto n_threads = opt_n_threads(std::min(num_query, num_key));
-  const auto n_blocks = (num_query + n_threads - 1) / n_threads;
+  const int MAX_THREADS_PER_BLOCK = 512;
+  const auto n_threads = getBlock(std::min(n1, n2), MAX_THREADS_PER_BLOCK);
+  const auto n_chunks = (n1 + n_threads - 1) / n_threads;
   dim3 grid;
-  const auto curDevice = at::cuda::current_device();
-  getGrid(batch_size * n_blocks, grid, curDevice);
+  // const auto curDevice = at::cuda::current_device();
+  getGrid(bs * n_chunks, grid, query.get_device());
 
-#define RUN(BLOCK_SIZE)                                                               \
-  AT_DISPATCH_FLOATING_TYPES(query.scalar_type(), "knn_distance_cuda", ([&] {         \
-                               knn_distance_kernel<BLOCK_SIZE, 3, 3, scalar_t, int64_t> \
-                                   <<<grid, BLOCK_SIZE>>>(                            \
-                                       index.data_ptr<int64_t>(),                     \
-                                       distance.data_ptr<scalar_t>(),                 \
-                                       query.data_ptr<scalar_t>(),                    \
-                                       key.data_ptr<scalar_t>(),                      \
-                                       batch_size,                                    \
-                                       num_query,                                     \
-                                       num_key);                                      \
-                             }));
+#define RUN(BLOCK_SIZE)                                               \
+  AT_DISPATCH_FLOATING_TYPES(                                         \
+      query.scalar_type(),                                            \
+      "knn_distance_cuda",                                            \
+      ([&] { knn_distance_kernel<BLOCK_SIZE, 3, 3, scalar_t, int64_t> \
+                 <<<grid, BLOCK_SIZE>>>(                              \
+                     index.data_ptr<int64_t>(),                       \
+                     distance.data_ptr<scalar_t>(),                       \
+                     query.data_ptr<scalar_t>(),                      \
+                     key.data_ptr<scalar_t>(),                        \
+                     bs,                                              \
+                     n1,                                              \
+                     n2); }));
 
 #define CASE(BLOCK_SIZE) \
-  case BLOCK_SIZE:           \
-    RUN(BLOCK_SIZE)          \
+  case BLOCK_SIZE:       \
+    RUN(BLOCK_SIZE)      \
     break;
 
   switch (n_threads)
@@ -209,11 +166,15 @@ std::vector<at::Tensor> knn_distance_cuda(
     CASE(128)
     CASE(64)
     CASE(32)
+    CASE(16)
+    CASE(8)
+    CASE(4)
+    CASE(2)
+    CASE(1)
   default:
-    RUN(16)
+    TORCH_CHECK(false, "Invalid case!");
   }
 
-  THCudaCheck(cudaGetLastError());
-
+  AT_CUDA_CHECK(cudaGetLastError());
   return std::vector<at::Tensor>({index, distance});
 }
