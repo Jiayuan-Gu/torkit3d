@@ -9,7 +9,14 @@ class Conv1dBNReLU(nn.Module):
     """
 
     def __init__(
-        self, in_channels, out_channels, kernel_size, relu=True, bn=True, **kwargs
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        relu=True,
+        bn=True,
+        dropout_p=0.0,
+        **kwargs
     ):
         super().__init__()
 
@@ -21,6 +28,7 @@ class Conv1dBNReLU(nn.Module):
         )
         self.bn = nn.BatchNorm1d(out_channels) if bn else None
         self.relu = nn.ReLU(inplace=True) if relu else None
+        self.dropout = nn.Dropout(dropout_p) if dropout_p > 0 else None
 
     def forward(self, x):
         x = self.conv(x)
@@ -28,6 +36,8 @@ class Conv1dBNReLU(nn.Module):
             x = self.bn(x)
         if self.relu is not None:
             x = self.relu(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
         return x
 
 
@@ -37,7 +47,14 @@ class Conv2dBNReLU(nn.Module):
     """
 
     def __init__(
-        self, in_channels, out_channels, kernel_size, relu=True, bn=True, **kwargs
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        relu=True,
+        bn=True,
+        dropout_p=0.0,
+        **kwargs
     ):
         super().__init__()
 
@@ -49,6 +66,7 @@ class Conv2dBNReLU(nn.Module):
         )
         self.bn = nn.BatchNorm2d(out_channels) if bn else None
         self.relu = nn.ReLU(inplace=True) if relu else None
+        self.dropout = nn.Dropout(dropout_p) if dropout_p > 0 else None
 
     def forward(self, x):
         x = self.conv(x)
@@ -56,4 +74,6 @@ class Conv2dBNReLU(nn.Module):
             x = self.bn(x)
         if self.relu is not None:
             x = self.relu(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
         return x

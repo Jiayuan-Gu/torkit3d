@@ -1,81 +1,133 @@
+"""PointNet for classification.
+
+See also:
+    https://github.com/charlesq34/pointnet
+
+References:
+    @article{qi2016pointnet,
+      title={PointNet: Deep Learning on Point Sets for 3D Classification and Segmentation},
+      author={Qi, Charles R and Su, Hao and Mo, Kaichun and Guibas, Leonidas J},
+      journal={arXiv preprint arXiv:1612.00593},
+      year={2016}
+    }
+"""
+
 import torch
 import torch.nn as nn
 
-from torkit3d.nn import mlp1d_bn_relu, mlp_bn_relu
+from torkit3d.nn import mlp
+from torkit3d.nn.modules.linear import LinearNormAct
 
-__all__ = ["PointNet"]
+__all__ = ["PointNet", "TNet"]
 
 
-class PointNet(nn.Module):
-    """PointNet for classification.
-
-    Notes:
-        1. The original implementation includes dropout for global MLPs.
-        2. The original implementation decays the BN momentum.
-    """
-
+class TNet(nn.Module):
     def __init__(
         self,
         in_channels=3,
-        local_channels=(64, 64, 64, 128, 1024),
+        out_channels=None,
+        local_channels=(64, 128, 1024),
         global_channels=(512, 256),
     ):
         super().__init__()
 
         self.in_channels = in_channels
-        self.out_channels = (local_channels + global_channels)[-1]
+        if out_channels is None:
+            out_channels = in_channels
+        self.out_channels = out_channels
 
-        self.mlp_local = mlp1d_bn_relu(in_channels, local_channels)
-        self.mlp_global = mlp_bn_relu(local_channels[-1], global_channels)
+        self.mlp_local = mlp(in_channels, local_channels, ndim=1)
+        self.mlp_global = mlp(local_channels[-1], global_channels)
+        self.linear = nn.Linear(
+            global_channels[-1], in_channels * out_channels, bias=True
+        )
 
         self.reset_parameters()
 
-    def forward(self, points, points_feature=None, points_mask=None) -> dict:
-        # points: [B, 3, N]; points_feature: [B, C, N], points_mask: [B, N]
-        if points_feature is not None:
-            input_feature = torch.cat([points, points_feature], dim=1)
-        else:
-            input_feature = points
-
-        local_feature = self.mlp_local(input_feature)
-        if points_mask is not None:
-            local_feature = torch.where(
-                points_mask.unsqueeze(1), local_feature, torch.zeros_like(local_feature)
-            )
-        global_feature, max_indices = torch.max(local_feature, 2)
-        output_feature = self.mlp_global(global_feature)
-
-        return {"feature": output_feature, "max_indices": max_indices}
+    def forward(self, x: torch.Tensor):
+        # x: [B, C, N]
+        x = self.mlp_local(x)  # [B, D1, N]
+        x, _ = torch.max(x, 2)  # [B, D1]
+        x = self.mlp_global(x)  # [B, D2]
+        x = self.linear(x)  # [B, C' * C]
+        x = x.view(-1, self.out_channels, self.in_channels)
+        I = torch.eye(
+            self.out_channels, self.in_channels, dtype=x.dtype, device=x.device
+        )
+        x = x.add(I)  # broadcast add, [B, C', C]
+        return x
 
     def reset_parameters(self):
-        for name, module in self.named_modules():
-            if isinstance(module, (nn.Linear, nn.Conv1d, nn.Conv2d)):
-                if module.bias is not None:
-                    nn.init.zeros_(module.bias)
-            if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d)):
-                module.momentum = 0.01
+        # Initialize linear transform to 0
+        nn.init.zeros_(self.linear.weight)
+        nn.init.zeros_(self.linear.bias)
 
 
-def main():
-    points = torch.randn(5, 3, 2048)
-    feature = torch.randn(5, 3, 2048)
-    points_mask = torch.rand(5, 2048) > 0
+class PointNet(nn.Module):
+    def __init__(
+        self,
+        in_channels=0,
+        hidden_sizes=(64, 64, 64, 128, 1024),
+        normalization="bn",
+        no_first_normalization=False,
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = hidden_sizes[-1]
+        self.mlp = mlp(
+            3 + in_channels, hidden_sizes, ndim=1, normalization=normalization
+        )
 
-    model = PointNet(3)
+        if no_first_normalization:
+            # Remove normalization in the first layer
+            self.mlp[0] = LinearNormAct(3 + in_channels, hidden_sizes[0], ndim=1)
+
+    def forward(
+        self,
+        points: torch.Tensor,  # [B, 3, N]
+        feats: torch.Tensor = None,  # [B, C, N]
+        mask: torch.Tensor = None,  # [B, N]
+        **kwargs
+    ) -> dict:
+        # Sanity check
+        assert points.dim() == 3 and points.size(1) == 3, points.size()
+
+        x = points if feats is None else torch.cat([points, feats], dim=1)
+        x = self.mlp(x)
+        if mask is not None:
+            x = torch.where(mask.unsqueeze(1), x, torch.zeros_like(x))
+        x, max_inds = torch.max(x, 2)
+        return {"feats": x, "max_inds": max_inds}
+
+
+def test():
+    bs = 32
+    n = 1024
+    d = 4
+
+    points = torch.randn(bs, 3, n)
+    feats = torch.randn(bs, d, n)
+    mask = torch.rand(bs, n) > 0.5
+
+    # Basic
+    model = PointNet(0)
     print(model)
-    endpoints = model(points)
-    for k, v in endpoints.items():
+    outs = model(points)
+    for k, v in outs.items():
         print(k, v.shape)
 
-    model = PointNet(6)
+    # With features
+    model = PointNet(d)
     print(model)
-    endpoints = model(points, feature)
-    for k, v in endpoints.items():
+    outs = model(points, feats)
+    for k, v in outs.items():
         print(k, v.shape)
-    endpoints = model(points, feature, points_mask)
-    for k, v in endpoints.items():
+
+    # With masks
+    outs = model(points, feats, mask)
+    for k, v in outs.items():
         print(k, v.shape)
 
 
 if __name__ == "__main__":
-    main()
+    test()

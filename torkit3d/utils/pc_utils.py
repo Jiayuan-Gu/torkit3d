@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 
 # ---------------------------------------------------------------------------- #
@@ -45,3 +46,17 @@ def pad_with_first_or_clip(array: np.array, n: int):
     else:
         pad = np.repeat(array[0:1], n - array.shape[0], axis=0)
         return np.concatenate([array, pad], axis=0)
+
+
+def normalize_points(points):
+    """Centralize point clouds and scale them by l2-norm."""
+    assert points.ndim == 2 and points.shape[1] == 3, points.shape
+    centroid = np.mean(points, axis=0)  # [N]
+    points = points - centroid  # [N, 3]
+    norm = np.max(np.linalg.norm(points, ord=2, axis=1))
+    return points / norm
+
+
+def rotate_points(points, axis, angle):
+    R = Rotation.from_rotvec(np.array(axis) * angle).as_matrix()
+    return points @ R.T

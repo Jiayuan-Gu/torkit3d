@@ -68,7 +68,7 @@ class PN2SSG(nn.Module):
         # Initialize
         self.reset_parameters()
 
-    def forward(self, points, points_feature=None):
+    def forward(self, points, points_feature=None, **kwargs):
         # points: [B, 3, N], points_feature: [B, C, N]
         fps_index = farthest_point_sample(points, self.num_samples[0], True)  # [B, N1]
         xyz_fps = batch_index_select(points, fps_index, dim=2)  # [B, 3, N1]
@@ -87,7 +87,7 @@ class PN2SSG(nn.Module):
         # Max pooling
         global_feature, max_indices = torch.max(local_feature, 2)
 
-        return {"feature": global_feature, "max_indices": max_indices}
+        return {"feats": global_feature, "max_indices": max_indices}
 
     def reset_parameters(self):
         for m in self.modules():

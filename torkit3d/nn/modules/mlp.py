@@ -1,34 +1,17 @@
 import torch
 from torch import nn
 
-from .conv import Conv1dBNReLU, Conv2dBNReLU
-from .linear import LinearBNReLU
+from .linear import LinearNormAct
 
-__all__ = ["mlp_bn_relu", "mlp1d_bn_relu", "mlp2d_bn_relu"]
+__all__ = ["mlp"]
 
 
-def mlp_bn_relu(in_channels, out_channels_list):
-    c_in = in_channels
+def mlp(c_in, hidden_sizes, ndim=0, normalization="bn", dropout_p=0.0):
     layers = []
-    for c_out in out_channels_list:
-        layers.append(LinearBNReLU(c_in, c_out, relu=True, bn=True))
-        c_in = c_out
-    return nn.Sequential(*layers)
-
-
-def mlp1d_bn_relu(in_channels, out_channels_list):
-    c_in = in_channels
-    layers = []
-    for c_out in out_channels_list:
-        layers.append(Conv1dBNReLU(c_in, c_out, 1, relu=True))
-        c_in = c_out
-    return nn.Sequential(*layers)
-
-
-def mlp2d_bn_relu(in_channels, out_channels_list):
-    c_in = in_channels
-    layers = []
-    for c_out in out_channels_list:
-        layers.append(Conv2dBNReLU(c_in, c_out, 1, relu=True))
+    for c_out in hidden_sizes:
+        layer = LinearNormAct(
+            c_in, c_out, ndim=ndim, normalization=normalization, dropout_p=dropout_p
+        )
+        layers.append(layer)
         c_in = c_out
     return nn.Sequential(*layers)
