@@ -1,5 +1,6 @@
 import argparse
 from collections import defaultdict
+from pathlib import Path
 
 import numpy as np
 import pytorch_lightning as pl
@@ -9,8 +10,10 @@ from pytorch_lightning.loggers import TensorBoardLogger
 from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Subset
+from torchvision.utils import save_image
 
-from torkit3d_baselines.nerf.dataset import NeRFSyntheticDataset
+from torkit3d.utils.misc import get_latest_checkpoint
+from torkit3d_baselines.nerf.dataset import NeRFSyntheticDataset, SpiralPosesDataset
 from torkit3d_baselines.nerf.model import NeRF
 
 
@@ -37,7 +40,7 @@ class LitNeRF(pl.LightningModule):
         n_importance=-1,
         image_size=None,
         chunk_size=8192,
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -77,7 +80,7 @@ class LitNeRF(pl.LightningModule):
         batch_idx: int,
         optimizer: torch.optim.Optimizer,
         *args,
-        **kwargs
+        **kwargs,
     ) -> None:
         super().optimizer_step(epoch, batch_idx, optimizer, *args, **kwargs)
 
@@ -159,22 +162,120 @@ class LitNeRF(pl.LightningModule):
         # Clear cache
         torch.cuda.empty_cache()
 
+    def render_rays_batch(self, batch_rays):
+        pred_rgb = []
+        for rays in torch.split(batch_rays, self.chunk_size):
+            preds = self.forward(rays, self.near, self.far)
+            pred_rgb.append(preds["rgb"])
+        pred_rgb = torch.cat(pred_rgb).reshape(*self.image_size, 3)
+        return pred_rgb
+
+    @torch.no_grad()
+    def test_step(self, batch, batch_idx):
+        pred_rgb = self.render_rays_batch(batch["rays"])
+
+        # Update metrics
+        psnr = torchmetrics.functional.peak_signal_noise_ratio(
+            pred_rgb.reshape(-1, 3), batch["rays_rgb"]
+        )
+        self.log("psnr", psnr)
+
+        # Save if output directory is provided
+        output_dir = self.hparams.get("test_output_dir", None)
+        if output_dir is not None:
+            save_image(
+                pred_rgb.permute(2, 0, 1), Path(output_dir) / f"{batch_idx:04d}.png"
+            )
+
+    @torch.no_grad()
+    def predict_step(self, batch, batch_idx: int, dataloader_idx: int = 0):
+        pred_rgb = self.render_rays_batch(batch["rays"])
+        pred_rgb = pred_rgb.mul(255).clamp_(0, 255)
+        return pred_rgb.to(device="cpu", dtype=torch.uint8).numpy()
+
+    # -------------------------------------------------------------------------- #
+    # Data
+    # -------------------------------------------------------------------------- #
+    def train_dataloader(self):
+        train_dataset = NeRFSyntheticDataset(
+            "data/nerf_synthetic/lego", "train", image_size=self.image_size
+        )
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=1,
+            shuffle=True,
+            num_workers=1,
+            collate_fn=concat_collate_fn,
+            persistent_workers=True,
+        )
+        return train_dataloader
+
+    def val_dataloader(self):
+        val_dataset = NeRFSyntheticDataset(
+            "data/nerf_synthetic/lego", "val", image_size=self.image_size, n_rays=None
+        )
+        # Use a subset for validation
+        val_dataset = Subset(val_dataset, list(range(10)))
+        val_dataloader = DataLoader(
+            val_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=1,
+            collate_fn=concat_collate_fn,
+            persistent_workers=True,
+        )
+        return val_dataloader
+
+    def test_dataloader(self):
+        test_dataset = NeRFSyntheticDataset(
+            "data/nerf_synthetic/lego", "test", image_size=self.image_size, n_rays=None
+        )
+        # test_dataset = Subset(test_dataset, list(range(10)))
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=1,
+            collate_fn=concat_collate_fn,
+        )
+        return test_dataloader
+
+    def predict_dataloader(self):
+        test_dataset = SpiralPosesDataset(
+            self.image_size,
+            fov=0.6911112070083618,
+            n_azimuths=60,
+            elevations=np.deg2rad([30]),
+            radius=4.0,
+        )
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=1,
+            collate_fn=concat_collate_fn,
+        )
+        return test_dataloader
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp_name", type=str, default="nerf")
+    parser.add_argument("--exp_name", type=str, default="lego")
+    parser.add_argument("--version", type=str, default="")
     parser.add_argument("--seed", type=int)
     parser.add_argument("--image_size", type=int, default=800)
     parser.add_argument("--n_segments", type=int, default=64)
     parser.add_argument("--n_importance", type=int, default=128)
     parser.add_argument("--max_steps", type=int, default=int(2e5))
     parser.add_argument("--val_check_interval", type=int, default=int(1e4))
-    parser.add_argument("--val_subset", type=int, default=10)
+    parser.add_argument("--test", action="store_true")
+    parser.add_argument("--predict", action="store_true")
+    parser.add_argument("--ckpt-path", type=str)
+    parser.add_argument("--test-output-dir", type=str)
     args = parser.parse_args()
 
     near, far = 2.0, 6.0  # nerf_synthetic blender
     image_size = (args.image_size, args.image_size)
-    num_workers = 1
     pl.seed_everything(args.seed)
 
     model = LitNeRF(
@@ -186,47 +287,69 @@ def main():
     )
     print(model)
 
-    train_dataset = NeRFSyntheticDataset(
-        "data/nerf_synthetic/lego", "train", image_size=image_size
-    )
-    train_dataloader = DataLoader(
-        train_dataset,
-        batch_size=1,
-        shuffle=True,
-        num_workers=num_workers,
-        collate_fn=concat_collate_fn,
-        persistent_workers=True,
-    )
-
-    val_dataset = NeRFSyntheticDataset(
-        "data/nerf_synthetic/lego", "val", image_size=image_size, n_rays=None
-    )
-    # Use a subset for validation
-    val_dataset = Subset(val_dataset, list(range(args.val_subset)))
-    val_dataloader = DataLoader(
-        val_dataset,
-        batch_size=1,
-        shuffle=False,
-        num_workers=num_workers,
-        collate_fn=concat_collate_fn,
-        persistent_workers=True,
-    )
-
     logger = TensorBoardLogger(
-        save_dir="logs", name=args.exp_name, default_hp_metric=False
+        save_dir="logs",
+        name=args.exp_name,
+        version=args.version,
+        default_hp_metric=False,
     )
-    trainer = pl.Trainer(
-        max_steps=args.max_steps,
-        accelerator="gpu",
-        devices=1,
-        num_sanity_val_steps=0,  # comment for debug
-        check_val_every_n_epoch=None,
-        val_check_interval=args.val_check_interval,
-        logger=logger,
-    )
-    trainer.fit(
-        model=model, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader
-    )
+
+    if args.test or args.predict:
+        if args.ckpt_path is None:
+            ckpt_dir = logger.log_dir + "/checkpoints"
+            ckpt_path = get_latest_checkpoint(ckpt_dir)
+        else:
+            ckpt_path = args.ckpt_path
+
+        test_output_dir = args.test_output_dir
+        if test_output_dir == "@":
+            _ckpt_path = Path(ckpt_path)
+            test_output_dir = _ckpt_path.parent / "../test_images_{}".format(
+                _ckpt_path.stem
+            )
+            test_output_dir.mkdir(exist_ok=True)
+
+        # Load checkpoints and override hparams
+        model = LitNeRF.load_from_checkpoint(
+            ckpt_path,
+            near=near,
+            far=far,
+            n_segments=args.n_segments,
+            n_importance=args.n_importance,
+            image_size=image_size,
+            test_output_dir=test_output_dir,
+        )
+
+        trainer = pl.Trainer(accelerator="gpu", devices=1, logger=False)
+        if args.test:
+            trainer.test(model)
+        if args.predict and test_output_dir is not None:
+            results = trainer.predict(model)
+            import imageio  # fmt: skip
+            video_path = Path(test_output_dir) / "spiral_rgb.mp4"
+            imageio.mimwrite(video_path, results, fps=15, quality=8)
+    else:
+        trainer = pl.Trainer(
+            max_steps=args.max_steps,
+            accelerator="gpu",
+            devices=1,
+            num_sanity_val_steps=0,  # comment for debug
+            check_val_every_n_epoch=None,
+            val_check_interval=args.val_check_interval,
+            logger=logger,
+        )
+        if args.ckpt_path is not None:
+            ckpt_path = args.ckpt_path
+        elif trainer.checkpoint_callback is not None:
+            if trainer.checkpoint_callback.dirpath is None:
+                ckpt_dir = logger.log_dir + "/checkpoints"
+            else:
+                ckpt_dir = trainer.checkpoint_callback.dirpath
+            ckpt_path = get_latest_checkpoint(ckpt_dir)
+        else:
+            ckpt_path = None
+
+        trainer.fit(model, ckpt_path=ckpt_path)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,71 @@ def get_rays_at_world(H, W, K, c2w, convention="blender"):
     return rays_o, rays_d
 
 
+def normalize_vector(x, eps=1e-6):
+    x = np.asarray(x)
+    assert x.ndim == 1, x.ndim
+    norm = np.linalg.norm(x)
+    if norm < eps:
+        return np.zeros_like(x)
+    else:
+        return x / norm
+
+
+def look_at(eye, target, up=(0, 0, 1), convention="blender"):
+    forward = normalize_vector(np.array(target) - np.array(eye))
+    up = normalize_vector(up)
+    left = np.cross(up, forward)
+    up = np.cross(forward, left)
+    if convention in ["blender", "opengl"]:
+        rotation = np.stack([-left, up, -forward], axis=1)
+    else:
+        raise NotImplementedError(convention)
+    T = np.eye(4)
+    T[:3, :3] = rotation
+    T[:3, 3] = eye
+    return T
+
+
+class SpiralPosesDataset(Dataset):
+    def __init__(self, image_size, fov, n_azimuths, elevations, radius) -> None:
+        super().__init__()
+
+        self.image_size = image_size
+        H, W = image_size
+        focal = 0.5 * W / np.tan(fov / 2)
+        self.intrinsic = np.float32(
+            [[focal, 0, 0.5 * W], [0, focal, 0.5 * H], [0, 0, 1]]
+        )
+
+        azimuths = np.linspace(0, 2 * np.pi, n_azimuths, endpoint=False)
+        poses = []
+        for elev in elevations:
+            for azim in azimuths:
+                poses.append(self.compute_pose(azim, elev, radius))
+        self.poses = poses
+
+    @staticmethod
+    def compute_pose(azimuth, elevation, radius):
+        x = np.cos(azimuth) * np.cos(elevation) * radius
+        y = np.sin(azimuth) * np.cos(elevation) * radius
+        z = np.sin(elevation) * radius
+        center = np.hstack([x, y, z])
+        return look_at(center, (0, 0, 0))
+
+    def __len__(self):
+        return len(self.poses)
+
+    def __getitem__(self, index):
+        # Get rays
+        H, W = self.image_size
+        K = self.intrinsic
+        c2w = self.poses[index]
+        rays_o, rays_d = get_rays_at_world(H, W, K, c2w, convention="blender")
+        rays = np.concatenate([rays_o, rays_d], axis=-1, dtype=np.float32)
+        rays = rays.reshape(-1, rays.shape[-1])
+        return dict(rays=rays)
+
+
 class NeRFSyntheticDataset(Dataset):
     def __init__(self, root_dir, split, image_size=None, n_rays=1024) -> None:
         super().__init__()

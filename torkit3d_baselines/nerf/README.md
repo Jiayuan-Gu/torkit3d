@@ -16,6 +16,17 @@ wget http://cseweb.ucsd.edu/~viscomp/projects/LF/papers/ECCV20/nerf/nerf_example
 unzip nerf_example_data.zip
 ```
 
+## Usage
+
+```bash
+# The logs are saved to logs/lego. The version is automated.
+python train_nerf.py --exp_name lego
+# Test
+python train_nerf.py --exp_name lego --test
+# Predict with spiral poses.
+python train_nerf.py --exp_name lego --predict --test-output-dir "@"
+```
+
 ## Reference
 
 - Official implementation (Tensorflow): <https://github.com/bmild/nerf>
@@ -26,7 +37,7 @@ unzip nerf_example_data.zip
 **Difference between my implementation and the official one**:
 
 - query points and segment lengths
-- I do not implement deterministic stratified sampling (`sample_pdf`). Note that it seems that `perturb==0` will never be true in the original implementation since perturb is set to `False` instead of `0` during inference.
-- I do not split query points into chunks to reduce memory footprint.
+- deterministic stratified sampling (`sample_pdf`) is not implemented. Note that it seems that `perturb==0` will never be true in the original implementation since perturb is set to `False` instead of `0` during inference.
+- query points are not split into chunks.
 - The background color is processed in a slightly different way.
-- I have not implemented `raw_noise_std`.
+- `raw_noise_std` is not implemented.
