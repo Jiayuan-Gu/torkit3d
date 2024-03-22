@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from torkit3d.nn import mlp1d_bn_relu, mlp_bn_relu
 from torkit3d.ops.edge_conv import EdgeConvBlock
-from torkit3d.ops.knn import compute_knn_builtin
+from torkit3d.ops.native import knn
 
 __all__ = ["DGCNN"]
 
@@ -56,9 +56,9 @@ class DGCNN(nn.Module):
             x = points
         for edge_conv in self.edge_convs:
             if knn_ind is None:
-                knn_ind = compute_knn_builtin(points, points, self.k)
+                _, knn_ind = knn(points, points, self.k)
             elif self.feature_knn:
-                knn_ind = compute_knn_builtin(x, x, self.k)
+                _, knn_ind = knn(x, x, self.k)
             x = edge_conv(x, x, knn_ind)
             features.append(x)
 

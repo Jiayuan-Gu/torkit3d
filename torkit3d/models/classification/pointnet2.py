@@ -6,7 +6,7 @@ import torch.nn as nn
 from torkit3d.layers.pointnet2 import BallQuery, SetAbstraction
 from torkit3d.nn import mlp1d_bn_relu
 from torkit3d.nn.functional import batch_index_select
-from torkit3d.ops.farthest_point_sample import farthest_point_sample
+from torkit3d.ops.sample_farthest_points import sample_farthest_points
 
 __all__ = ["PN2SSG"]
 
@@ -70,7 +70,7 @@ class PN2SSG(nn.Module):
 
     def forward(self, points, points_feature=None):
         # points: [B, 3, N], points_feature: [B, C, N]
-        fps_index = farthest_point_sample(points, self.num_samples[0], True)  # [B, N1]
+        fps_index = sample_farthest_points(points, self.num_samples[0], True)  # [B, N1]
         xyz_fps = batch_index_select(points, fps_index, dim=2)  # [B, 3, N1]
 
         # Set abstraction layers

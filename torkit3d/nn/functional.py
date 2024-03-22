@@ -32,7 +32,7 @@ def smooth_cross_entropy(input, target, label_smoothing):
 # Indexing
 # ---------------------------------------------------------------------------- #
 def batch_index_select(input, index, dim):
-    """Batch index_select
+    """The batched version of `torch.index_select`.
 
     Args:
         input (torch.Tensor): [B, ...]

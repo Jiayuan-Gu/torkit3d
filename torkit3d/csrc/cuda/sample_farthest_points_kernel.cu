@@ -6,7 +6,7 @@
 
 // Each block of threads process one point cloud.
 template <unsigned int BLOCK_SIZE, unsigned int DIM, typename scalar_t, typename index_t>
-__global__ void farthest_point_sample_kernel(
+__global__ void sample_farthest_points_kernel(
     index_t *__restrict__ index,         // [B, K]
     const scalar_t *__restrict__ points, // [B, N, D]
     scalar_t *__restrict__ min_dist,     // [B, N]
@@ -25,28 +25,29 @@ __global__ void farthest_point_sample_kernel(
   index = index + batch_idx * k;
 
   // Select the first point
-  int cur_idx = 0;
+  int selected = 0;
   if (tid == 0)
-    index[0] = cur_idx;
+    index[0] = selected;
 
   // Iterate to find the next farthest point
   for (int i = 1; i < k; ++i)
   {
     scalar_t p[DIM];         // last selected point
-    scalar_t max_dist = 0.0; // max distance to the current point
-    int max_idx = cur_idx;   // corresponding index
+    scalar_t max_dist = 0.0; // max distance to the last selected point
+    int max_idx = selected;  // corresponding index
 
     // Load last selected point
 #pragma unroll
     for (int d = 0; d < DIM; ++d)
-      p[d] = points[cur_idx * DIM + d];
+      p[d] = points[selected * DIM + d];
 
-    // Find the farthest point with parallel reduction
+    // Update the minimum distance of each point to the already selected points.
+    // Each thread handles a chunck of points.
     for (int j = tid; j < n; j += BLOCK_SIZE)
     {
       scalar_t dist = 0.0;
 
-      // Compute the distance
+      // Compute the distance between the last selected point and each point
 #pragma unroll
       for (int d = 0; d < DIM; ++d)
       {
@@ -57,14 +58,15 @@ __global__ void farthest_point_sample_kernel(
       // Update its (minimum) distance to all selected points
       scalar_t min_dist_j = min_dist[j];
       if (min_dist_j > dist || min_dist_j < 0.0)
-        min_dist[j] = dist;
-      else
-        dist = min_dist_j;
-
-      // Update the farthest distance
-      if (dist > max_dist)
       {
-        max_dist = dist;
+        min_dist[j] = dist;
+        min_dist_j = dist;
+      }
+
+      // Update the farthest distance in this thread
+      if (min_dist_j > max_dist)
+      {
+        max_dist = min_dist_j;
         max_idx = j;
       }
     }
@@ -75,7 +77,8 @@ __global__ void farthest_point_sample_kernel(
     __syncthreads();
 
     // assert BLOCK_SIZE == blockDim.x
-    // Reduce max
+    // Assume BLOCK_SIZE is a power of 2
+    // Reduce per-thread max into per-block max
     for (int s = BLOCK_SIZE / 2; s > 0; s >>= 1)
     {
       if (tid < s)
@@ -91,13 +94,16 @@ __global__ void farthest_point_sample_kernel(
       __syncthreads();
     }
 
-    cur_idx = smem_idx[0];
+    selected = smem_idx[0];
+
     if (tid == 0)
-      index[i] = (index_t)cur_idx;
+    {
+      index[i] = (index_t)selected;
+    }
   }
 }
 
-at::Tensor farthest_point_sample_cuda(
+at::Tensor sample_farthest_points_cuda(
     const at::Tensor points, // [B, N, 3]
     const int64_t num_samples)
 {
@@ -127,16 +133,16 @@ at::Tensor farthest_point_sample_cuda(
   const auto n_threads = getBlockSize(num_points, MAX_THREADS_PER_BLOCK);
   // printf("n_threads=%d\n", n_threads);
 
-#define RUN(BLOCK_SIZE)                                                     \
-  AT_DISPATCH_FLOATING_TYPES(                                               \
-      points.scalar_type(),                                                 \
-      "farthest_point_sample_cuda",                                         \
-      ([&] { farthest_point_sample_kernel<BLOCK_SIZE, 3, scalar_t, int64_t> \
-                 <<<batch_size, BLOCK_SIZE>>>(                              \
-                     index.data_ptr<int64_t>(),                             \
-                     points.data_ptr<scalar_t>(),                           \
-                     min_dist.data_ptr<scalar_t>(),                         \
-                     num_points,                                            \
+#define RUN(BLOCK_SIZE)                                                      \
+  AT_DISPATCH_FLOATING_TYPES(                                                \
+      points.scalar_type(),                                                  \
+      "sample_farthest_points_cuda",                                         \
+      ([&] { sample_farthest_points_kernel<BLOCK_SIZE, 3, scalar_t, int64_t> \
+                 <<<batch_size, BLOCK_SIZE>>>(                               \
+                     index.data_ptr<int64_t>(),                              \
+                     points.data_ptr<scalar_t>(),                            \
+                     min_dist.data_ptr<scalar_t>(),                          \
+                     num_points,                                             \
                      num_samples); }));
 
 #define CASE(BLOCK_SIZE) \
@@ -150,14 +156,8 @@ at::Tensor farthest_point_sample_cuda(
     CASE(256)
     CASE(128)
     CASE(64)
-    CASE(32)
-    CASE(16)
-    CASE(8)
-    CASE(4)
-    CASE(2)
-    CASE(1)
   default:
-    TORCH_CHECK(false, "Invalid case!");
+    CASE(32)
   }
 
   AT_CUDA_CHECK(cudaGetLastError());

@@ -7,7 +7,7 @@ from torkit3d.nn import mlp1d_bn_relu, mlp2d_bn_relu
 from torkit3d.ops.ball_query import ball_query
 from torkit3d.ops.group_points import group_points
 from torkit3d.ops.interpolate_feature import interpolate_feature
-from torkit3d.ops.knn_distance import knn_distance
+from torkit3d.ops.knn_points import knn_points
 
 
 class SetAbstraction(nn.Module):
@@ -124,7 +124,7 @@ class FeatureInterpolator(nn.Module):
         """
         with torch.no_grad():
             # index: [B, N1, K], distance: [B, N1, K]
-            index, distance = knn_distance(query_xyz, key_xyz, self.num_neighbors)
+            distance, index  = knn_points(query_xyz, key_xyz, self.num_neighbors)
             inv_distance = 1.0 / torch.clamp(distance, min=self._eps)
             norm = torch.sum(inv_distance, dim=2, keepdim=True)
             weight = inv_distance / norm
