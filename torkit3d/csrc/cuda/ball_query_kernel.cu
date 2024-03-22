@@ -3,7 +3,7 @@
 #include <vector>
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
-#include "torkit3d_utils.h"
+#include "utils.h"
 
 // Advanced memory loading
 // Each block processes a chunk of `index`, with each thread for one elements.
@@ -111,9 +111,9 @@ at::Tensor ball_query_cuda(
   // Sanity check
   CHECK_CONTIGUOUS_CUDA(query);
   CHECK_CONTIGUOUS_CUDA(key);
-  CHECK_EQ(query.size(0), key.size(0));
-  CHECK_EQ(query.size(2), 3);
-  CHECK_EQ(key.size(2), 3);
+  TORCH_CHECK_EQ(query.size(0), key.size(0));
+  TORCH_CHECK_EQ(query.size(2), 3);
+  TORCH_CHECK_EQ(key.size(2), 3);
 
   const auto batch_size = query.size(0);
   const auto n1 = query.size(1);
@@ -126,7 +126,7 @@ at::Tensor ball_query_cuda(
   // Calculate grids and blocks for kernels
   const int MAX_THREADS_PER_BLOCK = 512;
   // TOOD(jigu): find divisble power of 2
-  const auto n_threads = getBlock(std::min(n1, n2), MAX_THREADS_PER_BLOCK);
+  const auto n_threads = getBlockSize(std::min(n1, n2), MAX_THREADS_PER_BLOCK);
   const auto n_chunks = (n1 + n_threads - 1) / n_threads;
   dim3 grid;
   getGrid(batch_size * n_chunks, grid, query.get_device());

@@ -16,15 +16,31 @@
 
 ## Release Notes for PyTorch
 
+1.13:
+
+- `CHECK_` -> `TORCH_CHECK_`. [Github Pull Request](https://github.com/pytorch/vision/pull/6322)
+
 1.11:
+
 - `THCudaCheck` is deprecated and instead use `C10_CUDA_CHECK`. [Github issue](https://github.com/pytorch/pytorch/pull/66391). Add `#include <ATen/cuda/CUDAContext.h>`.
 
 1.5:
+
 - `Tensor.type()` is deprecated and instead use `Tensor.options()`
 - `Tensor.data()` is deprecated and instead use `Tensor.data_ptr()`
 
 1.2:
+
 - `AT_CHECK` -> `TORCH_CHECK`
 
 0.4:
+
 - `AT_ASSERT` -> `AT_CHECK`
+
+## Notes
+
+- `knn_distance` is faster than `torch.cdist` + `torch.topk` when the total number of elements is large. It can also save memory. But for small cases, it is not necessary.
+
+## References
+
+- [kaolin](https://github.com/NVIDIAGameWorks/kaolin)

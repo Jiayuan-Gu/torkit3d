@@ -1,5 +1,11 @@
 #include <torch/extension.h>
-#include <torkit3d.h>
+
+#include <group_points.h>
+#include <ball_query.h>
+#include <farthest_point_sample.h>
+#include <interpolate.h>
+#include <knn_distance.h>
+#include <chamfer_distance.h>
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {

@@ -1,5 +1,16 @@
+"""
+References:
+- https://github.com/NVIDIA/apex: `--no-build-isolation` if pyproject.toml is used. (PEP 518)
+- https://github.com/facebookresearch/pytorch3d: use `runpy` to read verison info. use `setup.cfg` to configure isort instead of `pyproject.toml`.
+- https://setuptools.pypa.io/en/latest/userguide/miscellaneous.html: MANIFEST.in
+- https://github.com/erikwijmans/Pointnet2_PyTorch
+- https://github.com/haosulab/SAPIEN
+- https://github.com/NVlabs/nvdiffrast: how to compile once actually used.
+"""
+
 import glob
 import os
+import runpy
 
 import torch
 from setuptools import find_packages, setup
@@ -9,8 +20,6 @@ from torch.utils.cpp_extension import (
     CppExtension,
     CUDAExtension,
 )
-
-import torkit3d
 
 
 def get_extensions():
@@ -31,11 +40,10 @@ def get_extensions():
         extension = CUDAExtension
         sources += source_cuda
         define_macros += [("WITH_CUDA", None)]
-        nvcc_flags = os.getenv("NVCC_FLAGS", "")
-        if nvcc_flags == "":
-            nvcc_flags = ["-O2"]
+        if "NVCC_FLAGS" in os.environ:
+            nvcc_flags = os.environ["NVCC_FLAGS"].split(" ")
         else:
-            nvcc_flags = nvcc_flags.split(" ")
+            nvcc_flags = []
         extra_compile_args = {
             "cxx": [],
             "nvcc": nvcc_flags,
@@ -57,28 +65,31 @@ def get_extensions():
     return ext_modules
 
 
+def get_version():
+    version = runpy.run_path("torkit3d/version.py")
+    return version["__version__"]
+
+
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
 setup(
     name="torkit3d",
-    version=torkit3d.__version__,
+    version=get_version(),
     author="Jiayuan Gu",
-    author_email="jigu@eng.ucsd.edu",
+    author_email="jigu@ucsd.edu",
+    url="https://github.com/Jiayuan-Gu/torkit3d",
     description="Pytorch Toolkit3D",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
     install_requires=[
-        "torch>=1.5.1",
+        "torch>=1.12.1",
         "numpy",
-        "scipy",
     ],
-    python_requires=">=3.6",
-    url="",
+    extras_require={"dev": ["pytest", "isort", "black"]},
+    python_requires=">=3.8",
     packages=find_packages(exclude=["tests"]),
-    long_description="",
-    classifiers=[
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: Apache Software License",
-        "Operating System :: OS Independent",
-        "Intended Audience :: Science/Research",
-        "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    ],
+    # include_package_data=True,
     ext_modules=get_extensions(),
     cmdclass={
         "build_ext": BuildExtension.with_options(no_python_abi_suffix=True),

@@ -5,7 +5,7 @@
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/ApplyGridUtils.cuh> // at::cuda::getApplyGrid
-#include "torkit3d_utils.h"
+#include "utils.h"
 
 template <unsigned int BLOCK_SIZE, unsigned int DIM, typename scalar_t, typename index_t>
 __global__ void chamfer_distance_forward_kernel(
@@ -96,9 +96,9 @@ std::vector<at::Tensor> chamfer_distance_forward_cuda(
     // Sanity check
     CHECK_CONTIGUOUS_CUDA(xyz1);
     CHECK_CONTIGUOUS_CUDA(xyz2);
-    CHECK_EQ(xyz1.size(0), xyz2.size(0));
-    CHECK_EQ(xyz1.size(2), 3);
-    CHECK_EQ(xyz2.size(2), 3);
+    TORCH_CHECK_EQ(xyz1.size(0), xyz2.size(0));
+    TORCH_CHECK_EQ(xyz1.size(2), 3);
+    TORCH_CHECK_EQ(xyz2.size(2), 3);
 
     const auto bs = xyz1.size(0);
     const auto n1 = xyz1.size(1);
@@ -218,17 +218,17 @@ std::vector<at::Tensor> chamfer_distance_backward_cuda(
     const auto n2 = grad_dist2.size(1);
 
     // Sanity check
-    CHECK_EQ(grad_dist2.size(0), bs);
-    CHECK_EQ(xyz1.size(0), bs);
-    CHECK_EQ(xyz2.size(0), bs);
-    CHECK_EQ(xyz1.size(1), n1);
-    CHECK_EQ(xyz2.size(1), n2);
-    CHECK_EQ(xyz1.size(2), 3);
-    CHECK_EQ(xyz2.size(2), 3);
-    CHECK_EQ(idx1.size(0), bs);
-    CHECK_EQ(idx2.size(0), bs);
-    CHECK_EQ(idx1.size(1), n1);
-    CHECK_EQ(idx2.size(1), n2);
+    TORCH_CHECK_EQ(grad_dist2.size(0), bs);
+    TORCH_CHECK_EQ(xyz1.size(0), bs);
+    TORCH_CHECK_EQ(xyz2.size(0), bs);
+    TORCH_CHECK_EQ(xyz1.size(1), n1);
+    TORCH_CHECK_EQ(xyz2.size(1), n2);
+    TORCH_CHECK_EQ(xyz1.size(2), 3);
+    TORCH_CHECK_EQ(xyz2.size(2), 3);
+    TORCH_CHECK_EQ(idx1.size(0), bs);
+    TORCH_CHECK_EQ(idx2.size(0), bs);
+    TORCH_CHECK_EQ(idx1.size(1), n1);
+    TORCH_CHECK_EQ(idx2.size(1), n2);
 
     auto grad_xyz1 = at::zeros({bs, n1, 3}, grad_dist1.options());
     auto grad_xyz2 = at::zeros({bs, n2, 3}, grad_dist2.options());

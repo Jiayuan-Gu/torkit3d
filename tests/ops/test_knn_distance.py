@@ -1,59 +1,65 @@
 import pytest
-import numpy as np
 import torch
-from torkit3d.ops.knn_distance import knn_distance
-
-
-def bpdist2(feature1, feature2, data_format='NCW'):
-    """This version has a high memory usage but more compatible(accurate)."""
-    if data_format == 'NCW':
-        diff = feature1.unsqueeze(3) - feature2.unsqueeze(2)
-        distance = torch.sum(diff ** 2, dim=1)
-    elif data_format == 'NWC':
-        diff = feature1.unsqueeze(2) - feature2.unsqueeze(1)
-        distance = torch.sum(diff ** 2, dim=3)
-    else:
-        raise ValueError('Unsupported data format: {}'.format(data_format))
-    return distance
-
-
-def knn_distance_torch(query_xyz, key_xyz, num_neighbors, transpose=True):
-    distance = bpdist2(query_xyz, key_xyz, data_format='NCW' if transpose else 'NWC')
-    distance, index = torch.topk(distance, num_neighbors, dim=2, largest=False, sorted=True)
-    return index, distance
-
+from torkit3d.ops.knn_points import knn_points
+from torkit3d.ops.native import knn
 
 test_data = [
-    (2, 512, 1024, True, False),
-    (3, 513, 1025, True, False),
-    (3, 513, 1025, False, False),
-    (3, 31, 63, True, False),
-    (32, 2048, 8192, True, True),
+    (1, 512, 1024, 3, True),
+    (2, 512, 1024, 32, False),
+    (3, 511, 1025, 31, True),
+    (32, 2048, 8192, 64, False),
 ]
 
 
-@pytest.mark.parametrize('b, n1, n2, transpose, profile', test_data)
-def test(b, n1, n2, transpose, profile):
-    np.random.seed(0)
-    k = 3
-
+@pytest.mark.parametrize("b, n1, n2, k, transpose", test_data)
+def test(b, n1, n2, k, transpose):
+    torch.manual_seed(0)
+    torch.cuda.manual_seed(0)
+    query = torch.randn(b, n1, 3).cuda()
+    key = torch.randn(b, n2, 3).cuda()
+    # Need double precision to avoid close distance (leading to ambiguous indices)
+    query = query.double()
+    key = key.double()
     if transpose:
-        query_np = np.random.randn(b, 3, n1).astype(np.float32)
-        key_np = np.random.randn(b, 3, n2).astype(np.float32)
-    else:
-        query_np = np.random.randn(b, n1, 3).astype(np.float32)
-        key_np = np.random.randn(b, n2, 3).astype(np.float32)
+        query = query.transpose(1, 2)
+        key = key.transpose(1, 2)
 
-    query_tensor = torch.tensor(query_np).cuda()
-    key_tensor = torch.tensor(key_np).cuda()
+    dist0, idx0 = knn(query, key, k, transpose=transpose, sorted=True)
+    dist1, idx1 = knn_points(
+        query, key, k, transpose=transpose, sorted=True, sqrt_distance=True
+    )
+    torch.testing.assert_close(dist0, dist1, atol=5e-5, rtol=1e-4)
+    torch.testing.assert_close(idx0, idx1)
 
-    if not profile:
-        index_actual, distance_actual = knn_distance(query_tensor, key_tensor, k, transpose=transpose)
-        index_desired, distance_desired = knn_distance_torch(query_tensor, key_tensor, k, transpose=transpose)
-        np.testing.assert_equal(index_actual.cpu().numpy(), index_desired.cpu().numpy())
-        np.testing.assert_allclose(distance_actual.cpu().numpy(), distance_desired.cpu().numpy(), atol=1e-6)
-    else:
-        with torch.autograd.profiler.profile(use_cuda=torch.cuda.is_available()) as prof:
-            knn_distance(query_tensor, key_tensor, k, transpose=transpose)
-            # knn_distance_torch(query_tensor, key_tensor, k, transpose=transpose)
-        print(prof)
+
+def profile(b, n1, n2, k):
+    print(f"Profiling for b={b}, n1={n1}, n2={n2}, k={k}")
+    torch.manual_seed(0)
+    torch.cuda.manual_seed(0)
+    query = torch.randn(b, n1, 3).cuda()
+    key = torch.randn(b, n2, 3).cuda()
+
+    knn(query, key, k)
+    with torch.autograd.profiler.profile(use_cuda=True) as prof:
+        knn(query, key, k)
+    print(prof)
+
+    knn_points(query, key, k, version=0)
+    with torch.autograd.profiler.profile(use_cuda=True) as prof:
+        knn_points(query, key, k, version=0)
+    print(prof)
+
+    knn_points(query, key, k, version=1)
+    with torch.autograd.profiler.profile(use_cuda=True) as prof:
+        knn_points(query, key, k, version=1)
+    print(prof)
+
+
+def main():
+    profile(32, 2048, 8192, 32)
+    profile(4, 512, 10000, 64)
+    profile(4, 10000, 512, 3)
+
+
+if __name__ == "__main__":
+    main()

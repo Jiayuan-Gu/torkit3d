@@ -1,12 +1,19 @@
-# Pytorch Toolkit3D (torkit3d)
+# Pytorch Tool Kit for 3D Computer Vision (torkit3d)
 
 ## Installation
 
-Please install pytorch first.
+[Pytorch](https://pytorch.org/) is required.
 
-### From source
+**From source**:
 
 ```bash
 git clone https://github.com/Jiayuan-Gu/torkit3d.git
-python setup.py build develop
+cd torkit3d
+pip install -e .  # editable
+```
+
+**Install from Github**:
+
+```bash
+pip install "git+https://github.com/Jiayuan-Gu/torkit3d.git"
 ```

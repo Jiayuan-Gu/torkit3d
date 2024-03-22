@@ -3,7 +3,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/ApplyGridUtils.cuh> // at::cuda::getApplyGrid
-#include "torkit3d_utils.h"
+#include "utils.h"
 
 at::Tensor group_points_forward_cuda(
     const at::Tensor input, // [B, C, N1]
@@ -13,9 +13,9 @@ at::Tensor group_points_forward_cuda(
   // Sanity check
   CHECK_CUDA(input);
   CHECK_CUDA(index);
-  CHECK_EQ(input.dim(), 3);
-  CHECK_EQ(index.dim(), 3);
-  CHECK_EQ(input.size(0), index.size(0));
+  TORCH_CHECK_EQ(input.dim(), 3);
+  TORCH_CHECK_EQ(index.dim(), 3);
+  TORCH_CHECK_EQ(input.size(0), index.size(0));
 
   const auto b = input.size(0);
   const auto c = input.size(1);
@@ -72,11 +72,11 @@ at::Tensor group_points_backward_cuda(
   // Sanity check
   CHECK_CONTIGUOUS_CUDA(grad_output);
   CHECK_CONTIGUOUS_CUDA(index);
-  CHECK_EQ(grad_output.dim(), 4);
-  CHECK_EQ(index.dim(), 3);
-  CHECK_EQ(index.size(0), grad_output.size(0));
-  CHECK_EQ(index.size(1), grad_output.size(2));
-  CHECK_EQ(index.size(2), grad_output.size(3));
+  TORCH_CHECK_EQ(grad_output.dim(), 4);
+  TORCH_CHECK_EQ(index.dim(), 3);
+  TORCH_CHECK_EQ(index.size(0), grad_output.size(0));
+  TORCH_CHECK_EQ(index.size(1), grad_output.size(2));
+  TORCH_CHECK_EQ(index.size(2), grad_output.size(3));
 
   const auto b = grad_output.size(0);
   const auto c = grad_output.size(1);

@@ -3,7 +3,7 @@
 #include <vector>
 #include <ATen/ATen.h>
 #include <ATen/cuda/ApplyGridUtils.cuh>
-#include "torkit3d_utils.h"
+#include "utils.h"
 
 template <typename scalar_t, typename index_t>
 __global__ void interpolate_forward_kernel(
@@ -56,14 +56,14 @@ at::Tensor interpolate_forward_cuda(
   CHECK_CONTIGUOUS_CUDA(input);
   CHECK_CONTIGUOUS_CUDA(index);
   CHECK_CONTIGUOUS_CUDA(weight);
-  CHECK_EQ(input.dim(), 3);
-  CHECK_EQ(index.dim(), 3);
-  CHECK_EQ(weight.dim(), 3);
-  CHECK_EQ(input.size(0), index.size(0));
-  CHECK_EQ(input.size(0), weight.size(0));
-  CHECK_EQ(index.size(1), weight.size(1));
-  CHECK_EQ(index.size(2), weight.size(2));
-  CHECK_EQ(index.size(2), 3);
+  TORCH_CHECK_EQ(input.dim(), 3);
+  TORCH_CHECK_EQ(index.dim(), 3);
+  TORCH_CHECK_EQ(weight.dim(), 3);
+  TORCH_CHECK_EQ(input.size(0), index.size(0));
+  TORCH_CHECK_EQ(input.size(0), weight.size(0));
+  TORCH_CHECK_EQ(index.size(1), weight.size(1));
+  TORCH_CHECK_EQ(index.size(2), weight.size(2));
+  TORCH_CHECK_EQ(index.size(2), 3);
 
   const auto b = input.size(0);
   const auto c = input.size(1);
@@ -154,14 +154,14 @@ at::Tensor interpolate_backward_cuda(
   CHECK_CONTIGUOUS_CUDA(grad_output);
   CHECK_CONTIGUOUS_CUDA(index);
   CHECK_CONTIGUOUS_CUDA(weight);
-  CHECK_EQ(grad_output.dim(), 3);
-  CHECK_EQ(index.dim(), 3);
-  CHECK_EQ(weight.dim(), 3);
-  CHECK_EQ(grad_output.size(0), index.size(0));
-  CHECK_EQ(grad_output.size(0), weight.size(0));
-  CHECK_EQ(grad_output.size(2), index.size(1));
-  CHECK_EQ(index.size(1), weight.size(1));
-  CHECK_EQ(index.size(2), weight.size(2));
+  TORCH_CHECK_EQ(grad_output.dim(), 3);
+  TORCH_CHECK_EQ(index.dim(), 3);
+  TORCH_CHECK_EQ(weight.dim(), 3);
+  TORCH_CHECK_EQ(grad_output.size(0), index.size(0));
+  TORCH_CHECK_EQ(grad_output.size(0), weight.size(0));
+  TORCH_CHECK_EQ(grad_output.size(2), index.size(1));
+  TORCH_CHECK_EQ(index.size(1), weight.size(1));
+  TORCH_CHECK_EQ(index.size(2), weight.size(2));
   TORCH_CHECK(index.size(2) == 3, "Only support k=3.");
 
   const auto b = grad_output.size(0);

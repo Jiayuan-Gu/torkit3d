@@ -2,7 +2,7 @@
 
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
-#include "torkit3d_utils.h"
+#include "utils.h"
 
 // Each block of threads process one point cloud.
 template <unsigned int BLOCK_SIZE, unsigned int DIM, typename scalar_t, typename index_t>
@@ -103,10 +103,10 @@ at::Tensor farthest_point_sample_cuda(
 {
   // Sanity check
   CHECK_CONTIGUOUS_CUDA(points);
-  CHECK_EQ(points.dim(), 3);
-  CHECK_EQ(points.size(2), 3);
-  CHECK_GT(num_samples, 0);
-  CHECK_GE(points.size(1), num_samples);
+  TORCH_CHECK_EQ(points.dim(), 3);
+  TORCH_CHECK_EQ(points.size(2), 3);
+  TORCH_CHECK_GT(num_samples, 0);
+  TORCH_CHECK_GE(points.size(1), num_samples);
 
   const auto batch_size = points.size(0);
   const auto num_points = points.size(1);
@@ -124,7 +124,7 @@ at::Tensor farthest_point_sample_cuda(
   // the number of points should be a power of 2.
   // NOTE(jigu): 512 seems to be faster than 1024 and 256.
   const int MAX_THREADS_PER_BLOCK = 512;
-  const auto n_threads = getBlock(num_points, MAX_THREADS_PER_BLOCK);
+  const auto n_threads = getBlockSize(num_points, MAX_THREADS_PER_BLOCK);
   // printf("n_threads=%d\n", n_threads);
 
 #define RUN(BLOCK_SIZE)                                                     \
