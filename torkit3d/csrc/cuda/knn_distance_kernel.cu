@@ -266,7 +266,7 @@ std::vector<at::Tensor> knn_distance_cuda(
   switch (version)                         \
   {                                        \
   case 0:                                  \
-    RUN(BLOCK_SIZE)                        \  
+    RUN(BLOCK_SIZE)                        \
       break;                               \
   case 1:                                  \
     DISPATCH_K(BLOCK_SIZE)                 \
