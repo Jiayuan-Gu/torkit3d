@@ -6,6 +6,7 @@
 #include <interpolate.h>
 #include <knn_distance.h>
 #include <chamfer_distance.h>
+#include <mask_iou.h>
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
@@ -19,5 +20,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
   m.def("knn_distance_cuda", &knn_distance_cuda);
   m.def("chamfer_distance_forward_cuda", &chamfer_distance_forward_cuda);
   m.def("chamfer_distance_backward_cuda", &chamfer_distance_backward_cuda);
+  m.def("mask_iou_cuda", &mask_iou_cuda);
 #endif
 }
